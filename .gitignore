@@ -9,14 +9,10 @@ buschain.db-wal
 *.db-shm
 *.db-wal
 
-# The reference workbook. Deliberately untracked for now: the only copy on
-# this machine (LDC_PLANNER__test-FINAL.xlsx) already carries the
-# Nationality/OP pick-list columns in Information!O and !P, so it is a
-# POST-export workbook, not the golden fixture tests/conftest.py:30 describes
-# as predating them. Committing it would pin AT1's byte-identity tripwire to a
-# derived artifact. Drop the real LDC_PLANNER__test.xlsx here and remove this
-# block to track it.
-LDC_PLANNER__test.xlsx
+# LDC_PLANNER__test.xlsx IS tracked — it is the golden fixture the whole suite
+# runs against. This one is a post-export copy of it (it already carries the
+# Nationality/OP pick-list columns in Information!O and !P, which the fixture
+# predates), kept out so it cannot shadow the real file again.
 LDC_PLANNER__test-FINAL.xlsx
 
 # Environment and build artifacts
