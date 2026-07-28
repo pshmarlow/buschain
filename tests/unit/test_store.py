@@ -361,6 +361,106 @@ def test_undo_history_is_capped_and_starts_fresh_per_import(repo):
     assert repo.undo_head() is None
 
 
+# -- dataset retention ---------------------------------------------------------
+#
+# Nothing reads an inactive dataset, so these tests are about the file on disk,
+# not about anything the dispatcher can see.
+
+def _big_import(repo: Repo) -> int:
+    """An import whose blob is large enough that pruning it moves page_count."""
+    return repo.import_dataset(
+        ImportedDataset(source_kind="xlsx", rows=(RawTripRow(2, trip_values()),),
+                        blob=b"x" * 200_000),
+        "big.xlsx")
+
+
+def _pages(repo: Repo) -> int:
+    """Size in pages rather than st_size: in WAL mode the main file does not
+    give back its space until a checkpoint, so the file on disk lags what the
+    database actually holds."""
+    return repo.conn.execute("PRAGMA page_count").fetchone()[0]
+
+
+def test_import_prunes_datasets_beyond_retention(repo):
+    seeded(repo)
+    ids = [import_rows(repo, RawTripRow(2, trip_values()))
+           for _ in range(repo.DATASET_RETENTION + 3)]
+    kept = [r["id"] for r in repo.conn.execute("SELECT id FROM datasets ORDER BY id")]
+    assert kept == ids[-repo.DATASET_RETENTION:]
+    assert repo.active_dataset_id() == ids[-1]
+    # The trips went with them rather than being orphaned behind the gate.
+    assert repo.conn.execute("SELECT COUNT(*) FROM trips").fetchone()[0] == \
+        repo.DATASET_RETENTION
+
+
+def test_prune_drops_orphaned_blobs_but_never_the_active_one(repo):
+    """The active blob is what the export byte-splices, so losing it would
+    break the export silently rather than loudly."""
+    seeded(repo)
+    for _ in range(repo.DATASET_RETENTION + 3):
+        import_rows(repo, RawTripRow(2, trip_values(company="Ollex 1")))
+    assert repo.conn.execute("SELECT COUNT(*) FROM blobs").fetchone()[0] == \
+        repo.DATASET_RETENTION
+    # No surviving dataset points at a blob that is gone...
+    assert repo.conn.execute(
+        "SELECT COUNT(*) FROM datasets d LEFT JOIN blobs b ON b.id = d.blob_id"
+        " WHERE d.blob_id IS NOT NULL AND b.id IS NULL").fetchone()[0] == 0
+    # ...and the live one is still there to splice.
+    assert repo.build_export_plan().blob == b"fake-xlsx-bytes"
+
+
+def test_prune_takes_every_child_of_the_dataset_with_it(repo):
+    """The prune is one DELETE and five cascades. accepted_links is the one to
+    watch: it also references trips with no ON DELETE, and _restore has to
+    delete links by hand for that reason — this pins that the dataset cascade
+    does not need the same treatment (nothing here raises IntegrityError) and
+    that no child is left orphaned behind the working-set gate."""
+    seeded(repo)
+    import_rows(repo,
+                RawTripRow(2, trip_values(company="Ollex 1", arr="CPH")),
+                RawTripRow(3, trip_values(start="2026-04-05", end="2026-04-07",
+                                          dep="CPH", arr="OSL")))
+    repo.accept(TripId("sheet", 3), "ollex", 1, TripId("sheet", 2))
+    with repo.undoable("edit C Notes on row 2"):
+        repo.set_cell(TripId("sheet", 2), "C Notes", "note")
+    repo.set_lock(TripId("sheet", 2), True)
+
+    for _ in range(repo.DATASET_RETENTION):
+        import_rows(repo, RawTripRow(2, trip_values()))
+
+    for table in ("accepted_links", "cell_overrides", "trip_locks", "undo_log"):
+        assert repo.conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0] == 0, \
+            f"{table} rows outlived their dataset"
+
+
+def test_prune_reclaims_space_from_an_over_full_database(tmp_path):
+    """The existing database meets this code already past the window: the next
+    import has to shrink it, not merely stop it growing. Covers the VACUUM,
+    which without it would leave the freed pages on the freelist."""
+    repo = seeded(Repo(db.connect(tmp_path / "grow.db")))
+    repo.DATASET_RETENTION = 50         # instance attribute shadows the policy
+    for _ in range(9):
+        _big_import(repo)
+    del repo.DATASET_RETENTION          # back to the real one
+
+    before = _pages(repo)
+    _big_import(repo)
+    assert _pages(repo) < before
+    assert repo.conn.execute("SELECT COUNT(*) FROM blobs").fetchone()[0] == \
+        repo.DATASET_RETENTION
+
+
+def test_import_past_the_window_stops_growing_the_database(tmp_path):
+    repo = seeded(Repo(db.connect(tmp_path / "plateau.db")))
+    for _ in range(repo.DATASET_RETENTION):
+        _big_import(repo)
+    plateau = _pages(repo)
+    for _ in range(6):
+        _big_import(repo)
+    # Each import banks ~200 KB, so six unpruned would be several times this.
+    assert _pages(repo) <= plateau * 1.1
+
+
 # -- pick lists, whose home is the Information sheet ---------------------------
 
 def _sheet(**lists):

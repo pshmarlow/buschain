@@ -491,33 +491,105 @@ class Repo:
         return dict(row) if row else None
 
     def import_dataset(self, dataset: ImportedDataset, filename: str) -> int:
-        """Replace the active dataset. Prior blobs stay for audit; prior
-        trips/links go with their dataset rows' active flag."""
-        with self._write_lock, self.conn:
-            self.conn.execute("UPDATE datasets SET active = 0 WHERE active = 1")
-            blob_id = None
-            if dataset.blob is not None:
-                blob_id = self.conn.execute(
-                    "INSERT INTO blobs (filename, content) VALUES (?, ?)",
-                    (filename, dataset.blob),
+        """Replace the active dataset, then drop imports that have fallen out
+        of the retention window (see _prune_datasets)."""
+        with self._write_lock:
+            with self.conn:
+                self.conn.execute("UPDATE datasets SET active = 0 WHERE active = 1")
+                blob_id = None
+                if dataset.blob is not None:
+                    blob_id = self.conn.execute(
+                        "INSERT INTO blobs (filename, content) VALUES (?, ?)",
+                        (filename, dataset.blob),
+                    ).lastrowid
+                dataset_id = self.conn.execute(
+                    "INSERT INTO datasets (blob_id, source_kind, csv_header)"
+                    " VALUES (?, ?, ?)",
+                    (blob_id, dataset.source_kind,
+                     json.dumps(dataset.csv_header) if dataset.csv_header else None),
                 ).lastrowid
-            dataset_id = self.conn.execute(
-                "INSERT INTO datasets (blob_id, source_kind, csv_header) VALUES (?, ?, ?)",
-                (blob_id, dataset.source_kind,
-                 json.dumps(dataset.csv_header) if dataset.csv_header else None),
-            ).lastrowid
-            if dataset_id is None:              # pragma: no cover - sqlite invariant
-                raise RepoError("Insert produced no dataset id")
-            csv_rows = dataset.csv_rows or ()
-            for i, row in enumerate(dataset.rows):
-                raw = {c: _jsonable(row.values.get(c)) for c in ALL_COLUMNS}
-                self.conn.execute(
-                    """INSERT INTO trips (dataset_id, origin, sheet_row, raw, csv_full)
-                       VALUES (?, 'sheet', ?, ?, ?)""",
-                    (dataset_id, row.sheet_row, json.dumps(raw),
-                     json.dumps(csv_rows[i]) if i < len(csv_rows) else None),
-                )
+                if dataset_id is None:          # pragma: no cover - sqlite invariant
+                    raise RepoError("Insert produced no dataset id")
+                csv_rows = dataset.csv_rows or ()
+                for i, row in enumerate(dataset.rows):
+                    raw = {c: _jsonable(row.values.get(c)) for c in ALL_COLUMNS}
+                    self.conn.execute(
+                        """INSERT INTO trips (dataset_id, origin, sheet_row, raw, csv_full)
+                           VALUES (?, 'sheet', ?, ?, ?)""",
+                        (dataset_id, row.sheet_row, json.dumps(raw),
+                         json.dumps(csv_rows[i]) if i < len(csv_rows) else None),
+                    )
+                # Inside the import's transaction: an import that fails must
+                # prune nothing. Imports are already a hard undo boundary
+                # (nothing before one is undoable), so this adds no new
+                # irreversible surface — the pruned datasets were unreachable
+                # from the moment the import that replaced them succeeded.
+                pruned = self._prune_datasets()
+            # VACUUM cannot run inside a transaction, hence outside the `with`
+            # — but still under the write lock. Without it the freed pages go
+            # to the freelist and the file stops growing but never shrinks.
+            # Gated on `pruned` so an import that deleted nothing never pays
+            # for a full-file rewrite.
+            if pruned:
+                self.conn.execute("VACUUM")
         return dataset_id
+
+    # Datasets accumulate. Importing does not delete the one it replaces, and
+    # every xlsx import banks a verbatim copy of the workbook in `blobs`
+    # (~1.9 MB) plus a full trip row set (~380 KB of JSON). Nothing reads an
+    # inactive dataset — active_dataset_id() gates every read path and no route
+    # exposes an older one — so unbounded the file grows ~2.3 MB per import
+    # forever: nine imports produced a 17 MB database that was 92% unreachable.
+    #
+    # Five rather than one, because the blob archive is the only copy of a
+    # workbook the app has ever seen and has already served as a recovery path
+    # (the golden test fixture was recovered from it). A handful of imports
+    # costs ~10 MB of disk and keeps that escape hatch open; either way the
+    # file plateaus instead of growing without limit, which is the point.
+    DATASET_RETENTION: int = 5
+
+    def _prune_datasets(self) -> bool:
+        """Drop every dataset outside the retention window, and any blob left
+        unreferenced. Caller owns the transaction; returns whether anything
+        was deleted.
+
+        What goes with a dataset includes its cell_overrides and accepted_links
+        — the dispatcher's actual work on that sheet. Nothing observable
+        changes, since that work was already unreachable; what changes is that
+        the loss becomes permanent. DATASET_RETENTION is the window that buys
+        back.
+        """
+        doomed = [r["id"] for r in self.conn.execute(
+            # active = 0 is redundant — the active dataset is always the newest
+            # by id, so the LIMIT already spares it. Kept anyway: deleting the
+            # active blob breaks export silently (it byte-splices from that
+            # blob, see build_export_plan), and a guard this cheap belongs in
+            # front of a failure that severe.
+            "SELECT id FROM datasets WHERE active = 0 AND id NOT IN"
+            " (SELECT id FROM datasets ORDER BY id DESC LIMIT ?)",
+            (self.DATASET_RETENTION,),
+        )]
+        if not doomed:
+            return False
+        marks = ",".join("?" * len(doomed))
+        # One statement: cascades to trips, and from there to cell_overrides
+        # and trip_locks; accepted_links and undo_log cascade off the dataset
+        # directly. accepted_links ALSO references trips with no ON DELETE, and
+        # _restore has to delete links by hand before touching trips for
+        # exactly that reason — but not here, and the difference is worth
+        # knowing before someone "fixes" it: SQLite checks immediate foreign
+        # keys at the conclusion of the statement, not mid-cascade, and both
+        # children hang off the same dataset row, so no link outlives the trip
+        # it names. _restore hard-deletes trips while their links survive,
+        # which is the case that genuinely raises.
+        self.conn.execute(f"DELETE FROM datasets WHERE id IN ({marks})", doomed)
+        # blobs is the one child with no ON DELETE clause, so it needs its own
+        # pass. Keyed on 'unreferenced' rather than 'belonged to a doomed
+        # dataset', which also sweeps a blob orphaned by an earlier failure.
+        self.conn.execute(
+            "DELETE FROM blobs WHERE id NOT IN"
+            " (SELECT blob_id FROM datasets WHERE blob_id IS NOT NULL)")
+        return True
 
     # -- state loading -------------------------------------------------------
 

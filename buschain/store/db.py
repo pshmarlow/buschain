@@ -34,6 +34,12 @@ CREATE TABLE IF NOT EXISTS registry_options (
     value TEXT NOT NULL,
     PRIMARY KEY (column_title, value)
 );
+-- The imported workbook, verbatim. Load-bearing for the active dataset: the
+-- xlsx export byte-splices the original file rather than re-serializing it.
+-- Older ones are kept only as a recovery path, and only a few of them — see
+-- Repo.DATASET_RETENTION, which prunes past that and is why this table does
+-- not grow without bound. Not cascaded from datasets (no ON DELETE below), so
+-- the prune sweeps unreferenced rows itself.
 CREATE TABLE IF NOT EXISTS blobs (
     id INTEGER PRIMARY KEY,
     filename TEXT NOT NULL,

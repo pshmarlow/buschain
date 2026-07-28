@@ -78,6 +78,21 @@ Key decisions worth knowing before editing:
   verbatim and overlays status/assignment strings at load time, so they are
   re-validated by the same contract as imported data and exported exactly
   as stored.
+- **Importing keeps the last five workbooks, not all of them.** An import does
+  not delete the dataset it replaces — it flips `active` and inserts a new one —
+  and every xlsx import also banks a verbatim copy of the workbook in `blobs`.
+  Nothing reads an inactive dataset (`active_dataset_id()` gates every read path
+  and no route exposes an older one), so left alone the file grew ~2.3 MB per
+  import forever: nine imports produced a 17 MB database that was 92%
+  unreachable. `Repo._prune_datasets` runs at the end of every import and drops
+  everything outside `DATASET_RETENTION = 5`, then `VACUUM`s — without which the
+  freed pages sit on the freelist and the file stops growing but never shrinks.
+  Five rather than one because the blob archive is the only copy of a workbook
+  the app has ever seen and has already served as a recovery path (the golden
+  test fixture was recovered from it); a handful of imports costs ~10 MB and
+  keeps that hatch open. What goes with a pruned dataset includes its
+  `cell_overrides` and `accepted_links` — real work, but work that was already
+  unreachable; the window is what buys back.
 - **ER (column M) is read only to label** an already-detected integrity gap
   as `explicit_er`. It is never a matching input and never written.
 - **Pasting rows is a codec, not a form.** `codecs/paste.py` takes tab-separated

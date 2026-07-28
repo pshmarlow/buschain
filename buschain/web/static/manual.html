@@ -1005,6 +1005,14 @@
   database is your working state. If you re-import a newer version of the
   planner, the old working dataset is replaced, so export first.
 </p>
+<p>
+  Replaced does not mean instantly gone: the app keeps the last five imported
+  workbooks so a file can be recovered if you lose the original, and drops
+  anything older each time you import. There is nothing to clean up and the
+  database does not grow without limit — but the retained copies are the file
+  as it arrived, not your work on it, so an export you never took is still an
+  export you no longer have.
+</p>
 </section>
 
 <!-- ─────────────────────────────────────────────────────────────────── -->
