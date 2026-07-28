@@ -549,6 +549,71 @@ td.cell input, td.cell select { width: 100%; min-width: 6rem; padding: 0.1rem 0.
 .note-input { width: 100%; min-width: 12rem; }
 #option-lists .row-form, #cities .row-form { margin-top: 0.4rem; }
 .form-error { color: var(--bad-fg); margin-left: 0.8rem; }
+/* ---------- Manual tab ----------
+   Prose, not UI: the app's own type sizes are tuned for dense tables and are
+   unreadable at paragraph length, so the manual sets its own measure and
+   scale. Everything is scoped under .manual so none of it leaks into a screen
+   that has to stay dense. */
+.manual { max-width: 52rem; font-size: 0.95rem; line-height: 1.6; }
+.manual-title { font-size: 1.6rem; margin: 0.5rem 0 0.3rem; }
+.manual-lede { color: var(--muted); font-size: 1.02rem; margin: 0 0 1.4rem; }
+.manual h2 {
+  font-size: 1.2rem; margin: 2.4rem 0 0.6rem;
+  padding-top: 1rem; border-top: 1px solid var(--line);
+}
+.manual h3 { font-size: 1rem; margin: 1.5rem 0 0.4rem; }
+.manual h4 { font-size: 0.92rem; margin: 1rem 0 0.3rem; color: var(--muted); }
+.manual p { margin: 0.6rem 0; }
+.manual ul, .manual ol { margin: 0.6rem 0; padding-left: 1.4rem; }
+.manual li { margin: 0.25rem 0; }
+.manual code {
+  background: var(--head-bg); border-radius: 4px; padding: 0.05rem 0.3rem;
+  font-size: 0.88em;
+}
+.manual-code {
+  background: var(--fg); color: var(--card); border-radius: 6px;
+  padding: 0.6rem 0.9rem; overflow-x: auto; font-size: 0.85rem;
+}
+.manual kbd {
+  border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 4px;
+  background: var(--card); padding: 0.05rem 0.35rem; font-size: 0.85em;
+}
+/* Contents: a card at the top rather than a sticky sidebar — the tab already
+   scrolls with the page, and a floating column at this width would crowd the
+   text it indexes. */
+.manual-toc {
+  background: var(--card); border: 1px solid var(--line); border-radius: 8px;
+  padding: 0.8rem 1rem; margin-bottom: 1.5rem;
+}
+.manual-toc ol { margin: 0.4rem 0 0; }
+.manual-toc a { color: var(--accent); text-decoration: none; }
+.manual-toc a:hover { text-decoration: underline; }
+/* Term-and-explanation blocks: the term carries the weight, the body is
+   indented so a long answer stays visibly subordinate to it. */
+.manual-dl dt { font-weight: 600; margin-top: 0.8rem; }
+.manual-dl dd { margin: 0.2rem 0 0 1.2rem; color: var(--fg); }
+.manual-table { border-collapse: collapse; margin: 0.8rem 0; width: 100%; }
+.manual-table th, .manual-table td {
+  border: 1px solid var(--line); padding: 0.4rem 0.6rem;
+  text-align: left; vertical-align: top;
+  /* The data tables set nowrap globally (th, td above) because a wrapped sheet
+     cell is unreadable; here the cells hold sentences, and inheriting it pushed
+     every table ~600px past the text measure. */
+  white-space: normal;
+}
+.manual-table th { background: var(--head-bg); color: var(--head-fg); }
+.manual-table ul { margin: 0.3rem 0; }
+.manual-steps li { margin: 0.4rem 0; }
+.manual-dim { color: var(--muted); font-size: 0.85em; }
+/* Two aside styles, and the distinction is deliberate: a note is context you
+   can read past, a warning is a way to silently produce wrong data. They are
+   coloured on the same scale the rest of the app uses for exactly that. */
+.manual-note, .manual-warn {
+  border-left: 3px solid var(--line); border-radius: 0 6px 6px 0;
+  padding: 0.6rem 0.9rem; margin: 1rem 0;
+}
+.manual-note { background: var(--head-bg); border-left-color: var(--accent); }
+.manual-warn { background: var(--warn-bg); color: var(--warn-fg); border-left-color: var(--warn-fg); }
 #toast {
   position: fixed; bottom: 1.2rem; left: 50%; transform: translateX(-50%);
   background: var(--fg); color: var(--card); padding: 0.5rem 1rem;

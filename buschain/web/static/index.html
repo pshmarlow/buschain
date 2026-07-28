@@ -15,6 +15,7 @@
     <button data-tab="timelines">Timelines</button>
     <button data-tab="worklist">Worklist</button>
     <button data-tab="registry">Registry</button>
+    <button data-tab="manual">Manual</button>
   </nav>
   <span id="dataset-info"></span>
 </header>
@@ -247,6 +248,14 @@ rules the planner uses (takes a few seconds). Shows the result before writing an
     <h2>Cities <small>(validated — Departure/Arrival must resolve here)</small></h2>
     <div id="cities"></div>
     <div id="option-lists"></div>
+  </section>
+
+  <!-- The manual's prose lives in manual.html and is fetched the first time
+       this tab is opened (loadManual in app.js) — it renders nothing from S,
+       and shipping ~900 lines of documentation inside the page everyone loads
+       would quadruple the shell for content most sessions never open. -->
+  <section id="tab-manual" class="tab">
+    <div id="manual-body"><p class="hint">Loading the manual…</p></div>
   </section>
 </main>
 

@@ -3470,6 +3470,33 @@ function renderAll() {
   renderRegistry();
 }
 
+/* ---------- Manual tab ---------- */
+
+/* The manual is static prose in its own file, fetched once on first open.
+   Not part of renderAll and not built from S: it renders no state, so
+   rebuilding it on every mutation would be pure cost. innerHTML rather than
+   el(): the markup is a fixed asset from this app's own static mount, never
+   user input, and hand-building a hundred paragraphs in JS would put the prose
+   somewhere nobody can read or edit it as prose. A failed fetch leaves a retry
+   rather than an empty tab. */
+let MANUAL_LOADED = false;
+
+async function loadManual() {
+  if (MANUAL_LOADED) return;
+  MANUAL_LOADED = true;                 // guard first: two fast clicks, one fetch
+  const box = $("#manual-body");
+  try {
+    const res = await fetch("manual.html");
+    if (!res.ok) throw new Error(res.statusText);
+    box.innerHTML = await res.text();
+  } catch (err) {
+    MANUAL_LOADED = false;
+    box.replaceChildren(
+      el("p", { class: "reason" }, `Could not load the manual: ${err.message}`),
+      el("button", { class: "btn", onclick: loadManual }, "Retry"));
+  }
+}
+
 function showTab(name) {
   document.querySelectorAll("#tabs button").forEach(
     (b) => b.classList.toggle("active", b.dataset.tab === name));
@@ -3484,6 +3511,7 @@ function showTab(name) {
     BOARD_RETARGET = true;
     renderBoard();
   }
+  if (name === "manual") loadManual();
   if (name === "data") {
     // Same hidden-measurement debt as the board: see alignFilterRow.
     alignFilterRow($("#trips-table"));

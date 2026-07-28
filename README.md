@@ -63,7 +63,7 @@ web  →  store  →  codecs  →  model
 | `buschain/engine/` | pure `evaluate(report, registry, accepted, objective, reposition, locked, as_of) → EngineResult`; greedy ranking + multi-hop chain planning over a feasible-link graph, plus `solve.py`: the same graph handed to an exact solver (CBC, optional `.[solver]` extra) behind the on-demand **Optimize coverage…** action |
 | `buschain/codecs/` | xlsx/csv importers + exporters behind neutral shapes (`ImportedDataset` in, `ExportPlan` out); swap/add codecs without touching anything else |
 | `buschain/store/` | SQLite; the only mutable state — every mutation re-runs the engine |
-| `buschain/web/` | thin FastAPI JSON API + one static page (5 tabs) |
+| `buschain/web/` | thin FastAPI JSON API + one static page (6 tabs; the last, **Manual**, is `static/manual.html` — prose fetched on first open, rendering nothing from state) |
 
 Key decisions worth knowing before editing:
 
