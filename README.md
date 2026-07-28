@@ -23,19 +23,15 @@ does not strip single ones.
 Fresh clone on the Windows machine:
 
 ```bat
-git clone -b windows-dev-support https://github.com/pshmarlow/buschain.git
+git clone https://github.com/pshmarlow/buschain.git
 cd buschain
 py -3 -m venv .venv
 .venv\Scripts\pip install -e ".[dev]"
 .venv\Scripts\python -m buschain.web
 ```
 
-Then open http://127.0.0.1:8000. If you already have the repo cloned there:
-
-```bat
-git fetch origin
-git checkout windows-dev-support
-```
+Then open http://127.0.0.1:8000. If you already have the repo cloned there,
+`git pull` first — Windows support landed after the initial import.
 
 Two things specific to a Windows run:
 
