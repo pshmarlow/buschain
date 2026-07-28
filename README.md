@@ -14,15 +14,40 @@ python3 -m venv .venv
 ./.venv/bin/python -m buschain.web     # http://127.0.0.1:8000
 ```
 
-Windows — `py -3`, not `python3`: the latter is an app-execution alias that
-opens the Microsoft Store instead of running anything. Double quotes, because
-`cmd.exe` does not strip single ones.
+### Using it on Windows
+
+`py -3`, not `python3`: the latter is an app-execution alias that opens the
+Microsoft Store instead of running anything. Double quotes, because `cmd.exe`
+does not strip single ones.
+
+Fresh clone on the Windows machine:
 
 ```bat
+git clone -b windows-dev-support https://github.com/pshmarlow/buschain.git
+cd buschain
 py -3 -m venv .venv
 .venv\Scripts\pip install -e ".[dev]"
 .venv\Scripts\python -m buschain.web
 ```
+
+Then open http://127.0.0.1:8000. If you already have the repo cloned there:
+
+```bat
+git fetch origin
+git checkout windows-dev-support
+```
+
+Two things specific to a Windows run:
+
+- **Start the server from the repo directory.** `DEFAULT_DB` is relative, so
+  `buschain.db` is created in *whatever* directory you launch from — start it
+  elsewhere and you silently get a new empty database rather than an error.
+  This is the one behavior deliberately left unchanged, since fixing it would
+  move an existing database.
+- **Clone somewhere outside OneDrive.** On Windows 11, Known Folder Move puts
+  `Documents` and `Desktop` under sync by default, and the `.db`/`-wal`/`-shm`
+  trio doesn't survive being synced as three independent files. `C:\dev\buschain`
+  or similar.
 
 First use: import the planner xlsx on the **Data** tab, then press
 **Seed from Information sheet** on the **Registry** tab (one-time; the
