@@ -1,0 +1,557 @@
+:root {
+  --bg: #f6f7f9; --fg: #1c2733; --muted: #6b7a8c; --card: #ffffff;
+  --line: #dde3ea; --accent: #1f6feb; --accent-fg: #ffffff;
+  --warn-bg: #fff4e5; --warn-fg: #8a5300; --bad-bg: #fdecea; --bad-fg: #9f1c14;
+  --ok-bg: #e8f5ee; --ok-fg: #14683c; --risk-bg: #fef7e0; --risk-fg: #7a5d00;
+  /* Ad hoc: a bus beyond the charter, on no unit timeline. Purple because it
+     is the one board colour that is not on the ok/risk/warn/bad scale — ad hoc
+     is neither a problem nor a degree of confidence, it is a different kind of
+     capacity. Named here so the bar, the legend swatch and the row band cannot
+     drift apart. */
+  --adhoc-bg: #ded3f7; --adhoc-fg: #4a2f96; --adhoc-line: #ab93e4;
+  /* Table headers: light blue fill, blue bold text. Kept dark enough to stay
+     legible at 0.85rem — a literal pale blue on white fails contrast. */
+  --head-bg: #e8f1fd; --head-fg: #14509e;
+  --jump-flash: #fff3c4;
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0; background: var(--bg); color: var(--fg);
+  font: 14px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+header {
+  display: flex; align-items: center; gap: 1.5rem;
+  padding: 0.6rem 1.2rem; background: var(--card);
+  border-bottom: 1px solid var(--line);
+  position: sticky; top: 0; z-index: 5;
+}
+h1 { font-size: 1.1rem; margin: 0; letter-spacing: 0.02em; }
+h2 { font-size: 1rem; margin: 1.4rem 0 0.5rem; }
+h2 small { color: var(--muted); font-weight: normal; }
+nav button {
+  background: none; border: none; padding: 0.55rem 0.9rem; cursor: pointer;
+  font: inherit; color: var(--muted); border-bottom: 2px solid transparent;
+}
+nav button.active { color: var(--fg); border-bottom-color: var(--accent); }
+#dataset-info { margin-left: auto; color: var(--muted); font-size: 0.85rem; }
+main { padding: 1rem 1.2rem 3rem; max-width: 1400px; margin: 0 auto; }
+.tab { display: none; }
+.tab.active { display: block; }
+.toolbar { display: flex; align-items: center; gap: 0.7rem; flex-wrap: wrap; margin: 0.4rem 0 1rem; }
+.btn {
+  display: inline-block; padding: 0.4rem 0.8rem; border: 1px solid var(--line);
+  border-radius: 6px; background: var(--card); color: var(--fg);
+  cursor: pointer; font: inherit; text-decoration: none;
+}
+.btn:hover { border-color: var(--accent); color: var(--accent); }
+.btn.primary { background: var(--accent); color: var(--accent-fg); border-color: var(--accent); }
+.btn.small { padding: 0.15rem 0.5rem; font-size: 0.8rem; }
+.btn:disabled { opacity: 0.5; cursor: default; }
+.btn:disabled:hover { border-color: var(--line); color: var(--fg); }
+/* The label carries the action name, which varies in length; a max-width keeps
+   a long one from pushing the rest of the toolbar onto another line. */
+.undo-btn {
+  max-width: 26rem; overflow: hidden;
+  text-overflow: ellipsis; white-space: nowrap;
+}
+/* Destructive, and one row away from the cells you click to edit — muted
+   until hovered, so it reads as available rather than as a prompt. */
+td.row-actions, th.row-actions { width: 1.6rem; padding: 0 0.2rem; text-align: center; }
+.row-del { border-color: transparent; color: var(--muted); padding: 0 0.35rem; }
+.row-del:hover { border-color: var(--bad-fg); color: var(--bad-fg); }
+/* Red at rest, unlike the ×'s hover-only red: this button acts on N rows the
+   ticks may have scrolled out of view, so it should read as destructive
+   before the click, not on it. */
+.btn.danger { color: var(--bad-fg); border-color: var(--bad-fg); }
+/* user-select: shift-click ticks a range, and without this the same gesture
+   also smears a text selection across every row in it. */
+.row-select { width: 1%; text-align: center; -webkit-user-select: none; user-select: none; }
+.card {
+  background: var(--card); border: 1px solid var(--line); border-radius: 8px;
+  padding: 1rem; margin: 0 0 1rem;
+}
+.hidden { display: none !important; }
+.banner {
+  display: flex; align-items: center; gap: 0.8rem; flex-wrap: wrap;
+  background: var(--warn-bg); color: var(--warn-fg);
+  border: 1px solid var(--line); border-radius: 8px;
+  padding: 0.7rem 1rem; margin-bottom: 1rem;
+}
+.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 0.6rem; margin-bottom: 0.8rem; }
+.grid label, .row-form label { display: flex; flex-direction: column; gap: 0.2rem; font-size: 0.8rem; color: var(--muted); }
+.req { color: var(--bad-fg); font-weight: 600; }
+.warn-text { color: var(--warn-fg); }
+#paste-cols { display: flex; flex-wrap: wrap; gap: 0.2rem 0.8rem; align-items: center; margin-bottom: 0.6rem; }
+.paste-col { display: inline-flex; align-items: center; gap: 0.25rem; white-space: nowrap; }
+input, select, textarea {
+  font: inherit; padding: 0.35rem 0.5rem; border: 1px solid var(--line);
+  border-radius: 6px; background: var(--card); color: var(--fg);
+}
+/* Monospace and no wrapping, so pasted columns stay in columns: seeing that a
+   row has one field too many is the whole diagnostic when a paste misaligns. */
+#paste-text {
+  display: block; width: 100%; margin-bottom: 0.6rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.8rem;
+  white-space: pre; overflow-x: auto;
+}
+.row-form { display: flex; gap: 0.5rem; margin-bottom: 0.7rem; flex-wrap: wrap; }
+.col-picker { margin-bottom: 0.5rem; font-size: 0.85rem; }
+/* The operable table's heading and controls share a single row, and the column
+   picker opens as a popover rather than in flow. Both exist for the same
+   reason: every pixel of chrome above the table is a pixel the table cannot
+   use, and the picker expanding must not shove the table down the page. */
+.trips-tools { position: relative; margin-bottom: 0.4rem; }
+.trips-tools .row-title { font-size: 1rem; margin: 0 0.3rem 0 0; }
+.trips-tools .col-picker { margin-bottom: 0; }
+/* Anchored to the whole tools row, not to the narrow "Columns" summary: hung
+   off the summary it starts two-thirds across the page and the last toggles
+   fall off the right edge. Spanning the row lets them wrap as they always did. */
+.trips-tools #column-toggles {
+  position: absolute; top: calc(100% + 0.3rem); left: 0; right: 0; z-index: 10;
+  margin-top: 0; box-shadow: 0 4px 14px rgba(0, 0, 0, 0.12);
+}
+.col-picker summary { cursor: pointer; color: var(--muted); width: max-content; }
+#column-toggles {
+  display: flex; flex-wrap: wrap; gap: 0.3rem 1rem;
+  background: var(--card); border: 1px solid var(--line); border-radius: 8px;
+  padding: 0.6rem 0.8rem; margin-top: 0.4rem;
+}
+.col-toggle { display: flex; align-items: center; gap: 0.3rem; cursor: pointer; }
+/* The wrapper owns BOTH axes. Without a height limit here the page is the
+   scroll container, so `position: sticky` on the header resolves against the
+   viewport and the rows scroll past it under the page header. Capping the
+   height makes the wrapper the scroller, and the header/filter row freeze
+   against it for free. */
+.table-wrap {
+  overflow: auto; max-height: 70vh;
+  background: var(--card); border: 1px solid var(--line); border-radius: 8px;
+}
+/* The operable table takes every pixel left on screen rather than a fixed
+   slice of it. The subtraction is measured, not guessed: it is the page header
+   plus the import toolbar plus the combined heading/controls row above, plus a
+   little breathing room at the bottom. This is the ceiling — the frozen header
+   sticks to the top of THIS box, so the moment the box runs past the bottom of
+   the window the header starts drifting out of view as you page-scroll. Making
+   the table meaningfully taller means removing chrome above it, not raising
+   this number. min-height keeps it usable on a short window, where the
+   subtraction would otherwise win. */
+.table-wrap.tall { max-height: calc(100vh - 11rem); min-height: 22rem; }
+table { border-collapse: collapse; width: 100%; font-size: 0.85rem; }
+th, td { text-align: left; padding: 0.35rem 0.6rem; border-bottom: 1px solid var(--line); white-space: nowrap; }
+/* Sticky headers must paint an opaque background or rows scroll through them,
+   so the light blue is the fill and the accent carries the text. The z-index
+   keeps the header above the filter row that sticks just beneath it. */
+th {
+  position: sticky; top: 0; z-index: 2;
+  background: var(--head-bg); color: var(--head-fg); font-weight: 700;
+}
+th.sortable { cursor: pointer; user-select: none; }
+th.sortable:hover { background: #dbe8fb; }
+th.sorted { background: #d3e3fb; }
+.sort-mark { margin-left: 0.25rem; font-size: 0.7rem; }
+.table-tools { display: flex; align-items: center; gap: 0.6rem; flex-wrap: wrap; margin-bottom: 0.5rem; }
+.search { min-width: 18rem; }
+/* Sticks directly under the header; the exact offset is measured in JS,
+   because it depends on the rendered header height. */
+.filter-cell {
+  position: sticky; z-index: 1; background: var(--card);
+  padding: 0.2rem 0.3rem; border-bottom: 1px solid var(--line);
+}
+.filter-cell input, .filter-cell select {
+  width: 100%; min-width: 5rem; padding: 0.1rem 0.25rem; font-size: 0.78rem;
+}
+/* Status filters to a set of values rather than one (see checkboxFilter). The
+   summary is dressed as the dropdown it replaces, so the filter row still reads
+   as one row of like controls, and the menu is absolutely positioned so opening
+   it cannot change the height of a row every column shares. */
+.chk-filter { position: relative; }
+.chk-filter > summary {
+  list-style: none; cursor: pointer; padding: 0.1rem 0.25rem;
+  font-size: 0.78rem; background: var(--card);
+  border: 1px solid var(--line); border-radius: 4px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.chk-filter > summary::-webkit-details-marker { display: none; }
+.chk-filter > summary::after { content: " ▾"; color: var(--muted); }
+.chk-filter[open] > summary { border-color: var(--accent); }
+.chk-menu {
+  position: absolute; z-index: 3; left: 0; top: 100%; margin-top: 2px;
+  min-width: max-content; padding: 0.25rem;
+  background: var(--card); border: 1px solid var(--line); border-radius: 6px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+}
+.chk-opt {
+  display: flex; align-items: center; gap: 0.4rem;
+  padding: 0.15rem 0.3rem; font-size: 0.8rem; cursor: pointer;
+}
+.chk-opt:hover { background: var(--head-bg); }
+/* Everything else in the filter row is full-width; a checkbox is not. */
+.chk-menu input[type="checkbox"] { width: auto; min-width: 0; }
+
+/* The Company name cell editor (comboInput): a listbox of divs rather than a
+   native select, because a native popup on macOS ignores background-color on
+   <option> and the availability tiers below would not show at all. */
+.combo { display: block; }
+.combo-search {
+  width: 100%; min-width: 9rem; padding: 0.1rem 0.25rem; font-size: 0.8rem;
+  border: 1px solid var(--accent); border-radius: 4px;
+}
+/* Fixed, so .table-wrap's overflow cannot clip it on the lower rows; placed by
+   comboInput, which is also why only the sizing lives here. */
+.combo-menu {
+  position: fixed; z-index: 40; max-height: 16rem; overflow-y: auto;
+  padding: 0.15rem; background: var(--card);
+  border: 1px solid var(--line); border-radius: 6px;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.18);
+}
+.combo-group {
+  padding: 0.35rem 0.45rem 0.15rem; font-size: 0.68rem; font-weight: 700;
+  color: var(--muted); text-transform: uppercase; letter-spacing: 0.03em;
+}
+.combo-opt {
+  padding: 0.2rem 0.45rem; margin: 1px 0; font-size: 0.82rem;
+  border-radius: 4px; white-space: nowrap; cursor: pointer;
+}
+/* The tiers. Availability is the one thing this picker exists to show, so the
+   green carries it and the ordering repeats it — neither alone. */
+.combo-opt[data-tier="suggested"] { background: #bfe6d1; color: #0f4f2d; font-weight: 600; }
+.combo-opt[data-tier="free"] { background: var(--ok-bg); color: var(--ok-fg); }
+/* The cell's current value, and the keyboard cursor. Distinct on purpose: they
+   start on the same row and separate as soon as you press an arrow key. */
+.combo-opt.current { outline: 1px dashed var(--muted); }
+.combo-opt.active { box-shadow: inset 0 0 0 2px var(--accent); }
+.combo-opt:hover { box-shadow: inset 0 0 0 2px var(--accent); }
+tr:last-child td { border-bottom: none; }
+
+/* A finished trip is still worth reading, just not worth acting on — hence a
+   fade rather than a colour change, so badges and highlights fade with it.
+   This is the one number to turn if it reads as too strong or too weak. */
+tbody tr.past { opacity: 0.65; }
+/* Jump-to-today lands the row under the frozen header, where it looks like any
+   other row. The flash is what tells you which one you were sent to. */
+@keyframes jump-flash {
+  from { background: var(--jump-flash); }
+  to { background: transparent; }
+}
+tbody tr.jump-target { animation: jump-flash 1.4s ease-out; }
+.badge { display: inline-block; padding: 0.05rem 0.45rem; border-radius: 10px; font-size: 0.75rem; }
+.badge.confirmed { background: var(--ok-bg); color: var(--ok-fg); }
+.badge.pending { background: var(--risk-bg); color: var(--risk-fg); }
+.badge.canceled { background: var(--bad-bg); color: var(--bad-fg); }
+.badge.warn { background: var(--warn-bg); color: var(--warn-fg); }
+.badge.system { background: #e7f0ff; color: #174ea6; }
+.badge.adhoc { background: var(--adhoc-bg); color: var(--adhoc-fg); }
+.reason { color: var(--bad-fg); font-size: 0.8rem; }
+/* The reasons are the point of the non-operable table, so let that column wrap
+   instead of being pushed out of the horizontally-scrolling wrapper. */
+#nonop-table td.reason { white-space: normal; vertical-align: top; min-width: 20rem; }
+
+/* Editable cells. An empty one still needs a click target, hence min-width. */
+td.cell { cursor: text; min-width: 3rem; }
+/* Both are a step stronger than they need to be on plain white, because they
+   also have to read on top of a banded row. */
+td.cell:hover { background: #e6eefa; }
+td.cell.edited { background: #e9f0ff; box-shadow: inset 2px 0 0 var(--accent); }
+td.cell input, td.cell select { width: 100%; min-width: 6rem; padding: 0.1rem 0.3rem; }
+.hint { color: var(--muted); font-size: 0.85rem; }
+.suggestion-group { margin-bottom: 1rem; }
+.suggestion-group > .head { font-weight: 600; margin-bottom: 0.3rem; }
+.cand {
+  display: flex; align-items: center; gap: 0.8rem; flex-wrap: wrap;
+  background: var(--card); border: 1px solid var(--line); border-radius: 8px;
+  padding: 0.45rem 0.7rem; margin-bottom: 0.35rem;
+}
+.cand.fallback { border-style: dashed; }
+.cand .gap { color: var(--muted); }
+
+/* Proposed chains. The left rule ties a chain's links together visually so a
+   chain reads as one decision rather than N unrelated rows. */
+.suggestion-group.planned {
+  border-left: 3px solid var(--accent); padding-left: 0.7rem;
+  background: rgba(31, 111, 235, 0.03); border-radius: 0 8px 8px 0;
+  padding-top: 0.5rem; padding-bottom: 0.1rem;
+}
+.suggestion-group.planned > .head { display: flex; align-items: center; gap: 0.5rem; }
+.suggestion-group.planned > .head button { margin-left: auto; }
+.cand.planned { border-style: dashed; border-color: #a9c6f2; }
+.cand .step { color: var(--muted); font-variant-numeric: tabular-nums; min-width: 1.3rem; }
+.seg-group { display: flex; align-items: center; gap: 0.3rem; color: var(--muted); font-size: 0.8rem; }
+#plan-summary { display: flex; align-items: center; gap: 0.8rem; flex-wrap: wrap; }
+#plan-summary .hint { flex-basis: 100%; }
+.risk { background: var(--risk-bg); color: var(--risk-fg); padding: 0.05rem 0.45rem; border-radius: 10px; font-size: 0.75rem; }
+
+/* ---------- the timeline board ---------- */
+
+/* One scroller owns both axes. Row labels stick to its left edge and the date
+   axis to its top, so the two stay in register with the bars for free —
+   nothing has to synchronise scroll positions in JS. */
+.board-scroll {
+  overflow: auto; max-height: 74vh; position: relative;
+  background: var(--card); border: 1px solid var(--line); border-radius: 8px;
+}
+/* max-content, not the default stretch-to-scrollport: a sticky child is
+   confined to its containing block, so unless the row box spans the whole
+   scrollable width the label unsticks the moment you scroll right. */
+.board-axis, .board-row { display: flex; align-items: stretch; width: max-content; }
+.board-axis { position: sticky; top: 0; z-index: 3; background: var(--card); border-bottom: 1px solid var(--line); }
+.board-row { border-bottom: 1px solid var(--line); }
+.board-row:last-child { border-bottom: none; }
+.row-label {
+  position: sticky; left: 0; z-index: 2; flex: none;
+  width: 190px; padding: 0.25rem 0.5rem; font-size: 0.8rem;
+  background: var(--card); border-right: 1px solid var(--line);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.board-axis .row-label { z-index: 4; }        /* over both sticky directions */
+.row-label small { color: var(--muted); }
+/* A unit that can no longer be chained is not a warning to act on — it is a
+   fact about the schedule — so it is marked, not alarmed: the left rule makes
+   the row findable when scanning, and the note carries the detail on hover.
+   `done` gets no mark at all; a chain that ran to the end of the horizon is
+   simply finished, and flagging it would cry wolf on every healthy unit. */
+.row-label.stranded { border-left: 3px solid var(--risk-fg); }
+.row-label.stranded small { color: var(--risk-fg); }
+.stranded-note { color: var(--warn-fg); }
+/* Ad hoc rows are tinted as a band, not just bar by bar. Sixteen company rows
+   sit below fifteen unit rows on the reference data, and a bar colour alone
+   only tells you what you are looking at after you have found a bar — on a
+   sparse row that can be a screen of scrolling away. The label tint and left
+   rule say "this stretch of the board is buses beyond the charter" before you
+   read anything. Scoped to .board-row.adhoc so it cannot collide with
+   .row-label.stranded, which claims the same left edge (ad hoc rows carry no
+   state today, and this keeps that from being load-bearing). */
+.board-row.adhoc .row-label {
+  background: var(--adhoc-bg); border-left: 3px solid var(--adhoc-fg);
+  color: var(--adhoc-fg);
+}
+.board-row.adhoc .row-label small { color: var(--adhoc-fg); opacity: 0.75; }
+/* background-color only: .row-canvas paints the day gridlines with
+   background-image, and the two compose without either redeclaring the other. */
+.board-row.adhoc .row-canvas { background-color: #f7f4fe; }
+.board-section { background: var(--bg); cursor: pointer; }
+.board-section:hover .row-label { color: var(--accent); }
+.board-section .row-label {
+  background: var(--bg); font-weight: 700; font-size: 0.7rem;
+  color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em;
+}
+/* Day gridlines as a background, not elements — a year-wide board would
+   otherwise cost hundreds of empty divs per row for nothing. */
+.row-canvas {
+  position: relative; flex: none;
+  background-image: repeating-linear-gradient(
+    to right, var(--line) 0 1px, transparent 1px var(--day-w));
+}
+.axis-canvas { position: relative; flex: none; height: 36px; }
+.axis-month {
+  position: absolute; top: 2px; height: 15px; overflow: hidden;
+  font-size: 0.7rem; font-weight: 600; white-space: nowrap;
+  border-left: 1px solid var(--line); padding-left: 4px;
+}
+.axis-day {
+  position: absolute; top: 19px; height: 15px; overflow: hidden;
+  font-size: 0.62rem; color: var(--muted); padding-left: 2px;
+}
+.today-line { position: absolute; top: 0; bottom: 0; border-left: 2px solid #d33; opacity: 0.5; }
+/* The selected trip's days, carried across every row. Tinted rather than
+   outlined: it is the background a whole board is read against, so it has to be
+   legible under a dimmed bar without competing with one. The edges are what make
+   the exact start and end days readable at a glance — a wash alone leaves you
+   guessing where it stops. */
+.span-band {
+  position: absolute; top: 0; bottom: 0;
+  background: rgba(31, 111, 235, 0.11);
+  border-left: 1px solid rgba(31, 111, 235, 0.45);
+  border-right: 1px solid rgba(31, 111, 235, 0.45);
+}
+/* On the axis it runs the full header height and is a touch stronger — this is
+   the one place it has to name actual dates rather than just align rows. */
+.axis-canvas .span-band { background: rgba(31, 111, 235, 0.16); }
+
+.bar {
+  position: absolute; height: 20px; line-height: 19px;
+  padding: 0 0.3rem; border-radius: 4px; border: 1px solid transparent;
+  font-size: 0.7rem; white-space: nowrap; overflow: hidden;
+  text-overflow: ellipsis; cursor: pointer;
+}
+.bar.confirmed { background: var(--ok-bg); color: var(--ok-fg); border-color: #b3d9c4; }
+.bar.pending { background: var(--risk-bg); color: var(--risk-fg); border-color: #ddc98d; border-style: dashed; }
+.bar.uncovered { background: var(--warn-bg); color: var(--warn-fg); border-color: #e3bd83; font-weight: 600; }
+/* Uncovered splits three ways. A trip nothing can reach *yet* is still work
+   waiting on a decision; a trip nothing can *ever* reach is not planning work
+   at all — it needs a bus bought or subcontracted. Painting them identically
+   is what made this lane a wall of undifferentiated orange. */
+.bar.uncovered.later {
+  background: #fdf4e6; color: #96703c; border-color: #e8d3b0;
+  border-style: dashed; font-weight: normal;
+}
+.bar.uncovered.never {
+  background: #eff1f3; color: #6b7a8c; border-color: #d8dde3; font-weight: normal;
+}
+/* Planned = the engine's proposal, not an assignment. Diagonal hatching is the
+   whole point: on a unit row (auto mode) a planned bar sits beside committed
+   ones, and only the fill tells them apart. Solid fills read as real, so this
+   one must never be solid. */
+.bar.planned {
+  background: repeating-linear-gradient(
+    45deg, rgba(31, 111, 235, 0.13), rgba(31, 111, 235, 0.13) 4px,
+    rgba(31, 111, 235, 0.03) 4px, rgba(31, 111, 235, 0.03) 8px);
+  color: #1c4d8f; border-color: var(--accent); border-style: dashed;
+  font-weight: 600;
+}
+/* A planned trip the bus has to be driven to empty first. Same hatching — it is
+   still a proposal — recoloured to the warn ramp, because the difference from a
+   plain planned bar is a real cost, not a different degree of certainty. */
+.bar.planned.reposition {
+  background: repeating-linear-gradient(
+    45deg, rgba(138, 83, 0, 0.15), rgba(138, 83, 0, 0.15) 4px,
+    rgba(138, 83, 0, 0.03) 4px, rgba(138, 83, 0, 0.03) 8px);
+  color: var(--warn-fg); border-color: var(--warn-fg);
+}
+/* Solid, not hatched: an ad hoc assignment is committed work, and hatching is
+   reserved for the planner's own proposals (.bar.planned). Saturated enough to
+   stay apart from .bar.uncovered.never's grey at 10px-per-day, where a bar is
+   a few pixels wide and only the fill is left to read. */
+.bar.adhoc {
+  background: var(--adhoc-bg); color: var(--adhoc-fg);
+  border-color: var(--adhoc-line);
+}
+.bar.canceled { background: var(--bad-bg); color: var(--bad-fg); opacity: 0.5; text-decoration: line-through; }
+.bar.overlap { outline: 2px solid var(--bad-fg); outline-offset: -2px; }
+/* Locked: held out of chaining. Marked, never recoloured — the fill still has
+   to say whether the trip is covered, because that is what locking either
+   costs or protects. A left edge composes with .selected's box-shadow and
+   .overlap's outline rather than competing with them for the same pixels. */
+.bar.locked { border-left: 4px solid #3d3d3d; }
+.bar.dim { opacity: 0.2; }
+.bar.selected { box-shadow: 0 0 0 2px var(--accent); z-index: 1; }
+.bar.partner { box-shadow: 0 0 0 2px #7aa8f0; z-index: 1; }
+
+/* Accepted chain link: supply's arrival to demand's departure, spanning the
+   idle days between them. */
+.connector { position: absolute; height: 0; border-top: 2px solid var(--accent); }
+.connector::after {
+  content: "▸"; position: absolute; right: -4px; top: -9px;
+  font-size: 0.7rem; color: var(--accent);
+}
+.connector.broken { border-top-style: dashed; border-top-color: var(--bad-fg); }
+.connector.broken::after { color: var(--bad-fg); }
+/* An accepted empty run. Dotted rather than dashed, on the warn ramp rather
+   than the bad one: it is a cost that was chosen, not a fault to repair — the
+   same distinction the integrity list draws between 'reposition' and
+   'city_mismatch'. Sharing the broken style is what made a working plan read
+   as a wall of errors. */
+.connector.reposition { border-top-style: dotted; border-top-color: var(--warn-fg); }
+.connector.reposition::after { color: var(--warn-fg); }
+.er-label { color: var(--warn-fg); }
+.gap-label {
+  position: absolute; left: 50%; transform: translateX(-50%); top: -13px;
+  font-size: 0.62rem; color: var(--muted); background: var(--card); padding: 0 2px;
+}
+.ghost {
+  position: absolute; height: 20px; line-height: 16px; text-align: center;
+  border: 2px dashed var(--accent); border-radius: 4px; cursor: pointer;
+  background: rgba(31, 111, 235, 0.09); color: var(--accent);
+  font-size: 0.68rem; font-weight: 600; white-space: nowrap; overflow: hidden;
+}
+.ghost:hover { background: rgba(31, 111, 235, 0.25); }
+.ghost.reposition {
+  border-color: var(--warn-fg); color: var(--warn-fg);
+  background: rgba(138, 83, 0, 0.09);
+}
+.ghost.reposition:hover { background: rgba(138, 83, 0, 0.22); }
+.badge.er { background: var(--warn-bg); color: var(--warn-fg); }
+/* The plan's own pick, sitting in the list of alternatives rather than above
+   it: tinted enough to find at a glance, not so much that the others read as
+   rejected — they are equally acceptable, which is the point of showing them. */
+.badge.chosen-badge { background: var(--ok-bg); color: var(--ok-fg); }
+.cand.chosen { border-color: #b3d9c4; background: #f6fbf8; }
+/* A button that reads as a link: it navigates rather than commits, so it must
+   not look like the Accept button next to it. */
+.linklike {
+  background: none; border: none; padding: 0; font: inherit; font-size: 0.8rem;
+  color: var(--accent); cursor: pointer; text-decoration: underline;
+}
+
+#board-legend { display: flex; gap: 0.7rem; flex-wrap: wrap; align-items: center; font-size: 0.75rem; color: var(--muted); }
+.swatch { display: inline-block; width: 11px; height: 11px; border-radius: 3px; margin-right: 4px; vertical-align: -1px; border: 1px solid transparent; }
+.sw-confirmed { background: var(--ok-bg); border-color: #b3d9c4; }
+.sw-pending { background: var(--risk-bg); border-color: #ddc98d; border-style: dashed; }
+.sw-uncovered { background: var(--warn-bg); border-color: #e3bd83; }
+.sw-later { background: #fdf4e6; border-color: #e8d3b0; border-style: dashed; }
+.sw-never { background: #eff1f3; border-color: #d8dde3; }
+.sw-planned {
+  background: repeating-linear-gradient(
+    45deg, rgba(31, 111, 235, 0.2), rgba(31, 111, 235, 0.2) 3px,
+    rgba(31, 111, 235, 0.03) 3px, rgba(31, 111, 235, 0.03) 6px);
+  border-color: var(--accent); border-style: dashed;
+}
+.sw-reposition {
+  background: repeating-linear-gradient(
+    45deg, rgba(138, 83, 0, 0.22), rgba(138, 83, 0, 0.22) 3px,
+    rgba(138, 83, 0, 0.03) 3px, rgba(138, 83, 0, 0.03) 6px);
+  border-color: var(--warn-fg); border-style: dashed;
+}
+.sw-adhoc { background: var(--adhoc-bg); border-color: var(--adhoc-line); }
+.sw-ghost { background: rgba(31, 111, 235, 0.09); border-color: var(--accent); border-style: dashed; }
+.sw-link { background: none; border: none; border-top: 2px solid var(--accent); height: 2px; border-radius: 0; }
+.sw-er-link {
+  background: none; border: none; height: 2px; border-radius: 0;
+  border-top: 2px dotted var(--warn-fg);
+}
+.btn.small.active { background: var(--accent); color: var(--accent-fg); border-color: var(--accent); }
+.zoom-group { display: flex; align-items: center; gap: 0.3rem; color: var(--muted); font-size: 0.8rem; }
+/* Re-chain preview: a card rather than a banner, because it is a proposal to
+   act on and it sits directly above the plan summary, which states what already
+   holds. The accent edge is the only thing distinguishing the two at a glance. */
+#rechain-panel { border-left: 3px solid var(--accent); }
+#rechain-panel .detail-head { display: flex; align-items: baseline; gap: 0.4rem; }
+#rechain-panel p { margin: 0.35rem 0; }
+#rechain-panel .toolbar { margin: 0.7rem 0 0; }
+
+#board-detail .detail-head { display: flex; align-items: center; gap: 0.4rem; margin-bottom: 0.6rem; }
+#board-detail .detail-head button { margin-left: auto; }
+/* Ruled off from the engine's own suggestions above it: this one is not a
+   recommendation, it is the manual override, and the two must not read alike. */
+.direct-assign { margin-top: 0.8rem; padding-top: 0.6rem; border-top: 1px dashed var(--line); }
+.direct-assign .cand { gap: 0.4rem; }
+/* The same rule, for the same reason, in the other direction: these are the
+   trips the planner refused, offered anyway. Ruled off from the suggestions
+   above so the two never read as one list. */
+.next-trips { margin-top: 0.8rem; padding-top: 0.6rem; border-top: 1px dashed var(--line); }
+.next-trips .cand { gap: 0.4rem; }
+/* Every row here breaks a rule, so none of them gets the primary Accept button
+   treatment — the button is deliberately quieter than the engine's. */
+.cand.next { border-style: dashed; }
+.cand.next .btn { margin-left: auto; }
+/* The click target in the blank space after a bus's last trip. Faint on a
+   quiet board, findable when you are looking for it — it is a question, not a
+   suggestion, so it must not compete with a ghost slot. */
+.next-stub {
+  position: absolute; height: 18px; line-height: 16px; padding: 0 5px;
+  border: 1px dashed var(--line); border-radius: 4px; cursor: pointer;
+  color: var(--muted); background: var(--card);
+  font-size: 0.62rem; white-space: nowrap; opacity: 0.55;
+}
+.next-stub:hover { opacity: 1; color: var(--accent); border-color: var(--accent); }
+.row-label[data-trip] { cursor: pointer; }
+.row-label[data-trip]:hover { color: var(--accent); }
+.finding { cursor: pointer; padding: 0.1rem 0; }
+.finding:hover { color: var(--accent); }
+#tab-timelines > details { margin-top: 1rem; }
+#tab-timelines > details > summary { cursor: pointer; font-weight: 600; padding: 0.3rem 0; }
+
+.chip {
+  display: inline-flex; align-items: center; gap: 0.3rem;
+  background: var(--card); border: 1px solid var(--line); border-radius: 14px;
+  padding: 0.15rem 0.6rem; margin: 0 0.3rem 0.3rem 0; font-size: 0.85rem;
+}
+.chip button { border: none; background: none; cursor: pointer; color: var(--muted); }
+.note-input { width: 100%; min-width: 12rem; }
+#option-lists .row-form, #cities .row-form { margin-top: 0.4rem; }
+.form-error { color: var(--bad-fg); margin-left: 0.8rem; }
+#toast {
+  position: fixed; bottom: 1.2rem; left: 50%; transform: translateX(-50%);
+  background: var(--fg); color: var(--card); padding: 0.5rem 1rem;
+  border-radius: 8px; font-size: 0.9rem; z-index: 20;
+}
+#toast.error { background: var(--bad-fg); }

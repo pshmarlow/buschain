@@ -1,0 +1,260 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>buschain — trip chaining</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header>
+  <h1>buschain</h1>
+  <nav id="tabs">
+    <button data-tab="data" class="active">Data</button>
+    <button data-tab="suggestions">Suggestions</button>
+    <button data-tab="timelines">Timelines</button>
+    <button data-tab="worklist">Worklist</button>
+    <button data-tab="registry">Registry</button>
+  </nav>
+  <span id="dataset-info"></span>
+</header>
+
+<main>
+  <div id="setup-banner" class="banner hidden"></div>
+
+  <section id="tab-data" class="tab active">
+    <div class="toolbar">
+      <label class="btn">
+        Import xlsx/csv <input type="file" id="import-file" accept=".xlsx,.csv" hidden>
+      </label>
+      <a class="btn" href="/api/export.xlsx" download>Export xlsx</a>
+      <a class="btn" href="/api/export.csv" download>Export csv</a>
+      <button class="btn" id="show-manual-form">Add trip</button>
+      <button class="btn" id="show-paste-form">Paste rows</button>
+      <!-- Same shared history in all three tabs; see renderUndo in app.js. -->
+      <button class="btn undo-btn" disabled>↶ Nothing to undo</button>
+      <span id="contract-summary"></span>
+    </div>
+
+    <form id="manual-form" class="card hidden">
+      <h3>New trip (validated by the same contract as imports)</h3>
+      <!-- Fields run A-O in sheet order, so the form reads like the row it
+           produces. Everything past 'Arrival' is passthrough free text the
+           contract never validates — it is here because a note or a rate typed
+           at the time of adding is a note that survives to the export, and the
+           alternative was adding the trip and then editing four more cells. -->
+      <div class="grid">
+        <!-- Status has no default: the contract needs one of the three, and
+             defaulting to Confirmed would quietly confirm trips nobody had
+             confirmed. Every `req` field below is one the contract fails the
+             row without; the rest are free text or optional. -->
+        <label><span>Status <span class="req">*</span></span>
+          <select name="A" required>
+            <option value="">— pick one —</option>
+            <option>Confirmed</option><option>Pending</option><option>Canceled</option>
+          </select>
+        </label>
+        <label>Project <input name="B" placeholder="numeric id"></label>
+        <!-- Options filled from the registry by renderManualLists; see app.js. -->
+        <label>Bus Preference <select name="C" id="manual-preference"></select></label>
+        <label>P Notes <input name="D"></label>
+        <label><span>Start date <span class="req">*</span></span><input name="E" type="date" required></label>
+        <label><span>End date <span class="req">*</span></span><input name="F" type="date" required></label>
+        <!-- The same closed city list the Data table's cell editor uses. A
+             typed code is the commonest reason a hand-added row lands in
+             Non-operable; a code the registry does not know yet is added on
+             the Registry tab, which is where cities live. -->
+        <label><span>Departure <span class="req">*</span></span>
+          <select name="G" id="manual-departure" required></select></label>
+        <label><span>Arrival <span class="req">*</span></span>
+          <select name="H" id="manual-arrival" required></select></label>
+        <label>Nationality <select name="I" id="manual-nationality"></select></label>
+        <label>OP <select name="J" id="manual-op"></select></label>
+        <label>Quoted rate <input name="K" placeholder="e.g. 650EUR"></label>
+        <label>Pax <input name="L"></label>
+        <label>ER <input name="M" placeholder="blank or n/a for none"></label>
+        <label>Company name <select name="N" id="manual-company"></select></label>
+        <label>C Notes <input name="O"></label>
+      </div>
+      <button type="submit" class="btn primary">Add trip</button>
+      <span class="hint"><span class="req">*</span> required — the contract
+        fails the row without it. Everything else may be left empty.</span>
+      <span class="form-error" id="manual-error"></span>
+    </form>
+
+    <form id="paste-form" class="card hidden">
+      <h3>Paste rows from the sheet</h3>
+      <p class="hint">
+        Copy rows straight out of the sheet and paste them here — one trip per
+        line, no header needed. <strong>If your sheet hides columns, untick
+        them below</strong>: Excel leaves hidden columns out of what it copies,
+        and nothing in the pasted text says so — read against the full layout,
+        every value after the gap lands in the wrong column, plausibly enough
+        to slip through validation. The ticked columns are read in order.
+        (Remembered by this browser; a pasted header row, if one is included,
+        overrides the ticks for that paste.)
+      </p>
+      <!-- Filled from S.columns by renderPastePicker; see app.js. -->
+      <div class="hint" id="paste-cols"></div>
+      <p class="hint">
+        Dates are read as the sheet renders them (<code>1-Apr-26</code>) or as
+        <code>2026-04-01</code>; anything ambiguous (<code>04/05/2026</code>) is
+        kept as typed and reported by the contract. Rows that fail validation
+        are still added — they appear under <em>Non-operable</em> with reasons,
+        and one Undo removes the whole paste.
+      </p>
+      <textarea id="paste-text" rows="8" spellcheck="false"
+                placeholder="Status&#9;Project&#9;Bus Preference&#9;P Notes&#9;Start date&#9;End date&#9;Departure&#9;Arrival…&#10;Confirmed&#9;22198&#9;Kautra&#9;&#9;1-Apr-26&#9;6-Apr-26&#9;STO&#9;STO…"></textarea>
+      <button type="submit" class="btn primary">Add pasted rows</button>
+      <span class="form-error" id="paste-error"></span>
+      <p class="hint" id="paste-columns"></p>
+    </form>
+
+    <div class="table-tools trips-tools">
+      <h2 class="row-title">Operable trips</h2>
+      <input class="search" data-table="trips" type="search"
+             placeholder="Search operable trips…" aria-label="Search operable trips">
+      <button class="btn small" data-clear="trips">Clear filters</button>
+      <button class="btn small" id="trips-today"
+              title="Scroll to the first trip starting today or later">Today</button>
+      <button class="btn small danger hidden" id="trips-del-sel">Delete selected</button>
+      <details class="col-picker">
+        <summary>Columns</summary>
+        <div id="column-toggles"></div>
+      </details>
+    </div>
+    <div class="table-wrap tall"><table id="trips-table"></table></div>
+
+    <h2>Non-operable rows <small>(passed through untouched on export)</small></h2>
+    <div class="table-tools">
+      <input class="search" data-table="nonop" type="search"
+             placeholder="Search non-operable rows…" aria-label="Search non-operable rows">
+      <button class="btn small" data-clear="nonop">Clear filters</button>
+      <button class="btn small danger hidden" id="nonop-del-sel">Delete selected</button>
+    </div>
+    <div class="table-wrap"><table id="nonop-table"></table></div>
+  </section>
+
+  <section id="tab-suggestions" class="tab">
+    <div class="toolbar">
+      <span class="seg-group" id="mode-group">Mode
+        <button class="btn small" data-mode="manual">Manual</button>
+        <button class="btn small" data-mode="auto">Auto</button>
+      </span>
+      <span class="seg-group" id="objective-group">Optimize for
+        <button class="btn small" data-objective="coverage">Most trips covered</button>
+        <button class="btn small" data-objective="idle">Fewest idle days</button>
+      </span>
+      <!-- Not scoped to this tab: it also changes what the Timelines board
+           offers. It sits here because it is the third thing that decides what
+           the engine computes, alongside mode and objective. -->
+      <span class="seg-group" id="reposition-group">Empty runs
+        <button class="btn small" data-reposition="1">Allowed</button>
+        <button class="btn small" data-reposition="0">Same city only</button>
+      </span>
+      <!-- The only control that takes assignments BACK. It reads the three
+           settings to its left, so it sits after them. -->
+      <button class="btn small" id="rechain-btn"
+              title="Rebuild every releasable future chain from scratch under the
+settings on the left. Shows what it would do before writing anything.">Re-chain future…</button>
+      <!-- Rule 8's exact solver. A preview-and-commit action like re-chain,
+           not a live objective: the solve takes seconds, and paying that on
+           every refresh would tax every unrelated edit. -->
+      <button class="btn small" id="optimize-btn"
+              title="Solve for the maximum number of coverable trips over the same
+rules the planner uses (takes a few seconds). Shows the result before writing anything.">Optimize coverage…</button>
+      <button class="btn small undo-btn" disabled>↶ Nothing to undo</button>
+    </div>
+    <div id="rechain-panel" class="card hidden"></div>
+    <div id="optimal-panel" class="card hidden"></div>
+    <div id="plan-summary" class="banner"></div>
+    <div id="plan-chains"></div>
+
+    <details id="loose-candidates">
+      <summary>Single-hop candidates <small>(the next link only, ungrouped)</small></summary>
+      <div class="toolbar">
+        <label><input type="radio" name="direction" value="by-trip" checked> Per uncovered trip</label>
+        <label><input type="radio" name="direction" value="by-unit"> Per free unit</label>
+      </div>
+      <div id="suggestions"></div>
+    </details>
+  </section>
+
+  <section id="tab-timelines" class="tab">
+    <div class="toolbar">
+      <span class="zoom-group">Zoom
+        <button class="btn small" data-zoom="10">S</button>
+        <button class="btn small active" data-zoom="22">M</button>
+        <button class="btn small" data-zoom="36">L</button>
+      </span>
+      <button class="btn small" id="board-today">Today</button>
+      <label><input type="checkbox" id="all-uncovered"> All uncovered</label>
+      <label><input type="checkbox" id="show-canceled"> Show canceled</label>
+      <label><input type="checkbox" id="show-adhoc" checked> Ad hoc</label>
+      <button class="btn small undo-btn" disabled>↶ Nothing to undo</button>
+      <span id="board-legend">
+        <span><i class="swatch sw-confirmed"></i>Confirmed</span>
+        <span><i class="swatch sw-pending"></i>Pending</span>
+        <span><i class="swatch sw-uncovered"></i>Uncovered — actionable</span>
+        <span><i class="swatch sw-planned"></i>Planned (provisional)</span>
+        <span><i class="swatch sw-reposition"></i>Planned — needs an empty run</span>
+        <span><i class="swatch sw-later"></i>Opens up later</span>
+        <span><i class="swatch sw-never"></i>No same-city chain</span>
+        <span><i class="swatch sw-adhoc"></i>Ad hoc</span>
+        <span><i class="swatch sw-ghost"></i>Candidate slot</span>
+        <span><i class="swatch sw-link"></i>Accepted chain link</span>
+        <span><i class="swatch sw-er-link"></i>Accepted empty run</span>
+      </span>
+    </div>
+    <p class="hint">Click any trip to see its chain options: an uncovered trip
+    shows which units could take it, an assigned trip shows what it can pick up
+    next. Esc clears.</p>
+    <div id="board-capacity" class="banner hidden"></div>
+    <div id="board-warning" class="banner hidden"></div>
+    <div id="board-detail" class="card hidden"></div>
+    <div id="board" class="board-scroll"></div>
+
+    <details>
+      <summary>Fleet over-commitment warnings</summary>
+      <div id="fleet-warnings"></div>
+    </details>
+    <details>
+      <summary>Unit integrity findings</summary>
+      <div id="integrity"></div>
+    </details>
+  </section>
+
+  <section id="tab-worklist" class="tab">
+    <h2>Broken chains</h2>
+    <p class="hint">Assignments that relied on a trip which has since been canceled
+    or unassigned. Unassigning frees the trip so the suggester re-proposes it.</p>
+    <div id="worklist"></div>
+  </section>
+
+  <section id="tab-registry" class="tab">
+    <div class="toolbar">
+      <button class="btn" id="seed-btn">Seed from Information sheet</button>
+      <span id="seed-note"></span>
+    </div>
+    <div id="seed-warnings"></div>
+    <h2>Companies</h2>
+    <form id="company-form" class="row-form">
+      <input name="name" placeholder="Company name" required>
+      <input name="note" placeholder="Note">
+      <button class="btn" type="submit">Add / update</button>
+    </form>
+    <div class="table-wrap"><table id="companies-table"></table></div>
+    <h2>Cities <small>(validated — Departure/Arrival must resolve here)</small></h2>
+    <div id="cities"></div>
+    <div id="option-lists"></div>
+  </section>
+</main>
+
+<!-- aria-live: toasts are the only place errors and confirmations land, and
+     without it a screen reader never hears any of them. -->
+<div id="toast" class="hidden" role="status" aria-live="polite"></div>
+<!-- rules.js first: app.js reads its top-level `Rules` binding. -->
+<script src="rules.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

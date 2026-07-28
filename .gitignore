@@ -1,0 +1,36 @@
+# Live user data. buschain.db is the app's default DB and holds the
+# dispatcher's real plan — never commit it, and never point an experiment at
+# it (pass a scratch path to create_app instead). The -shm/-wal siblings are
+# SQLite's WAL files for the same database.
+buschain.db
+buschain.db-shm
+buschain.db-wal
+*.db
+*.db-shm
+*.db-wal
+
+# The reference workbook. Deliberately untracked for now: the only copy on
+# this machine (LDC_PLANNER__test-FINAL.xlsx) already carries the
+# Nationality/OP pick-list columns in Information!O and !P, so it is a
+# POST-export workbook, not the golden fixture tests/conftest.py:30 describes
+# as predating them. Committing it would pin AT1's byte-identity tripwire to a
+# derived artifact. Drop the real LDC_PLANNER__test.xlsx here and remove this
+# block to track it.
+LDC_PLANNER__test.xlsx
+LDC_PLANNER__test-FINAL.xlsx
+
+# Environment and build artifacts
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+
+# Tool caches
+.pytest_cache/
+.ruff_cache/
+.hypothesis/
+
+# macOS
+.DS_Store
