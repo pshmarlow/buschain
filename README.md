@@ -14,6 +14,16 @@ python3 -m venv .venv
 ./.venv/bin/python -m buschain.web     # http://127.0.0.1:8000
 ```
 
+Windows — `py -3`, not `python3`: the latter is an app-execution alias that
+opens the Microsoft Store instead of running anything. Double quotes, because
+`cmd.exe` does not strip single ones.
+
+```bat
+py -3 -m venv .venv
+.venv\Scripts\pip install -e ".[dev]"
+.venv\Scripts\python -m buschain.web
+```
+
 First use: import the planner xlsx on the **Data** tab, then press
 **Seed from Information sheet** on the **Registry** tab (one-time; the
 registry is maintained in-app afterwards — check the seed warnings for
@@ -36,12 +46,20 @@ On the **Timelines** board, selecting a bar opens its panel; **Show in Data**
 (shortcut: `d`) jumps to that trip's row in the Data tab, clearing the Data
 filters first if they were hiding it.
 
-State lives in `buschain.db` (SQLite) next to the project.
+State lives in `buschain.db` (SQLite), created in **whatever directory you
+start the server from** — not next to the package. Start it somewhere else and
+you get a different, empty database rather than an error, so launching by
+shortcut or from an elevated shell is worth checking. Keep it on a local disk:
+SQLite's WAL mode needs a memory-mapped `-shm` file that network shares do not
+provide, and a heavily synced folder (OneDrive, Dropbox) sees the `.db`, `-wal`
+and `-shm` as three files to upload at three different moments, so restoring
+from version history can reconstitute a torn database.
 
 ## Tests
 
 ```bash
 ./.venv/bin/pytest            # unit + all 7 acceptance tests from the brief
+.venv\Scripts\pytest          # Windows
 ```
 
 The reference workbook `LDC_PLANNER__test.xlsx` is the golden fixture:

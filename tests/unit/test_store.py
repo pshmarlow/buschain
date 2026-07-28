@@ -1,4 +1,6 @@
 """Store: registry CRUD, dataset lifecycle, mutations, export-plan flags."""
+import sqlite3
+
 import pytest
 
 from buschain import engine
@@ -459,6 +461,55 @@ def test_import_past_the_window_stops_growing_the_database(tmp_path):
         _big_import(repo)
     # Each import banks ~200 KB, so six unpruned would be several times this.
     assert _pages(repo) <= plateau * 1.1
+
+
+class _RefusesToVacuum:
+    """The connection, except that VACUUM fails the way it fails in the wild:
+    it needs a temp file and an exclusive lock, and a locked-down %TEMP%, a
+    second instance of the app or a reader holding the database open takes one
+    of those away. Not a sqlite3.Connection subclass — that type is written in
+    C and takes no instance attributes, so a proxy is the way to intercept."""
+
+    def __init__(self, conn):
+        self._conn = conn
+
+    def execute(self, sql, *args):
+        if sql == "VACUUM":
+            raise sqlite3.OperationalError("unable to open database file")
+        return self._conn.execute(sql, *args)
+
+    # `with self.conn:` looks the dunders up on the type, so __getattr__ never
+    # sees them.
+    def __enter__(self):
+        return self._conn.__enter__()
+
+    def __exit__(self, *exc):
+        return self._conn.__exit__(*exc)
+
+    def __getattr__(self, name):
+        return getattr(self._conn, name)
+
+
+def test_a_failed_vacuum_still_leaves_a_committed_pruned_import(tmp_path):
+    """VACUUM is best-effort; pruning is not. It runs after the import has
+    committed, so letting it raise would report a successful import as a 500
+    and skip the fleet sync the route runs next — the user would read that as
+    'the import failed' and re-import."""
+    repo = seeded(Repo(db.connect(tmp_path / "novacuum.db")))
+    for _ in range(repo.DATASET_RETENTION):
+        _big_import(repo)
+    repo.conn = _RefusesToVacuum(repo.conn)     # type: ignore[assignment]
+
+    before = _pages(repo)
+    dataset_id = _big_import(repo)              # must not raise
+
+    assert dataset_id == repo.active_dataset_id()
+    assert repo.conn.execute("SELECT COUNT(*) FROM datasets").fetchone()[0] == \
+        repo.DATASET_RETENTION
+    # The pages really were freed and really were not reclaimed — which is
+    # what proves the VACUUM was skipped rather than quietly succeeding.
+    assert repo.conn.execute("PRAGMA freelist_count").fetchone()[0] > 0
+    assert _pages(repo) >= before
 
 
 # -- pick lists, whose home is the Information sheet ---------------------------

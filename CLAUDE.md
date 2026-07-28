@@ -14,6 +14,9 @@ uvx ruff check buschain tests                       # lint (config in pyproject;
 .venv/bin/python -m buschain.web                    # run the app on 127.0.0.1:8000
 ```
 
+On Windows the interpreter is `.venv\Scripts\python.exe` — substitute it for
+`.venv/bin/python` throughout. `uvx ruff check` is identical on both.
+
 `tests/unit/test_rules_js.py` runs the browser's rule arithmetic in node and
 skips if node is absent. The exact solver needs `pulp` (`buschain[solver]`
 extra, pinned `<4` — PuLP 4.0 removes the API in use; migration note in

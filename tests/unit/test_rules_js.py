@@ -78,10 +78,13 @@ console.log(JSON.stringify(out));
 @pytest.fixture(scope="module")
 def js(tmp_path_factory):
     harness = tmp_path_factory.mktemp("rulesjs") / "harness.js"
-    harness.write_text(_HARNESS)
+    # encoding pinned on both sides: node reads this file as utf8 (above) and
+    # writes its output the same way, while Python would otherwise pick the
+    # locale encoding — cp1252 on a default Windows box.
+    harness.write_text(_HARNESS, encoding="utf-8")
     proc = subprocess.run(
         [NODE, str(harness), str(RULES_JS), json.dumps(graph.window_rules())],
-        capture_output=True, text=True, timeout=30,
+        capture_output=True, encoding="utf-8", timeout=30,
     )
     assert proc.returncode == 0, proc.stderr
     return json.loads(proc.stdout)

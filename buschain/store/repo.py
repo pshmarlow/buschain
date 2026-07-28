@@ -531,7 +531,20 @@ class Repo:
             # Gated on `pruned` so an import that deleted nothing never pays
             # for a full-file rewrite.
             if pruned:
-                self.conn.execute("VACUUM")
+                # Best-effort, and it has to be: the import is committed by
+                # now, so raising here would report a successful import as a
+                # 500 and skip the fleet sync the route runs afterwards.
+                # VACUUM needs a temp file and an exclusive lock, and either
+                # can be denied by something outside this app — a locked-down
+                # %TEMP% on Windows, a second instance of the app, a reader
+                # holding the database open. Losing it costs only the reclaim:
+                # the freed pages stay on the freelist, which is exactly how
+                # this behaved before pruning existed, and the next import
+                # tries again.
+                try:
+                    self.conn.execute("VACUUM")
+                except sqlite3.Error:
+                    pass
         return dataset_id
 
     # Datasets accumulate. Importing does not delete the one it replaces, and
