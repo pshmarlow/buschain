@@ -101,10 +101,15 @@ def _unit_timeline_ok(demand: Trip, supply: Trip, unit_trips: Sequence[Trip]) ->
     successor is exempt — its explicit repositioning covers the move).
     """
     # Trips already overlapping the supply trip are pre-existing integrity
-    # violations (e.g. a typo'd start year spanning twelve months in the
-    # reference data). They are enumerated by the integrity check for a human
-    # to resolve — letting them veto every future link would freeze the whole
-    # unit on account of one bad row.
+    # violations. They are enumerated by the integrity check for a human to
+    # resolve — letting them veto every future link would freeze whole units on
+    # account of bad rows the planner cannot fix.
+    #
+    # The case this was written for, a typo'd start year spanning twelve
+    # months, is now caught upstream (contract.MAX_TRIP_SPAN_DAYS), which took
+    # the reference data's overlap findings from 4 to 0. The branch stays for
+    # the overlaps that reach here by other routes, but nothing in the fixture
+    # exercises it any more — test_links.py covers it directly instead.
     coherent = [
         t for t in unit_trips
         if t.id != supply.id

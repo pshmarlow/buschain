@@ -84,6 +84,29 @@ def test_insert_may_not_break_a_valid_successor_pair():
     assert edges_for(s, d_ok, unit_trips=[s, successor])
 
 
+def test_trip_overlapping_the_supply_does_not_block():
+    """The other half of _unit_timeline_ok's tolerance (graph.py): a trip that
+    already sits on top of the supply is a pre-existing violation the integrity
+    report enumerates, not a veto over every future link — otherwise one bad row
+    freezes its whole unit.
+
+    Covered here rather than by the reference data: the workbook's four overlap
+    findings all came from typo'd-year rows, and the contract now refuses those
+    (contract.MAX_TRIP_SPAN_DAYS), so no real row exercises this branch anymore.
+    """
+    s = mk_trip("STO", "CPH", 0, 3, company="ollex", unit=1)
+    # Already sitting on top of s, and so already an integrity finding.
+    squatter = mk_trip("OSL", "OSL", 1, 2, company="ollex", unit=1)
+    d = mk_trip("CPH", "OSL", 5, 7)
+    assert edges_for(s, d, unit_trips=[s, squatter])
+    # The tolerance is only for overlaps with the SUPPLY: the same trip moved
+    # clear of s still blocks the gap, as test_existing_trip_in_gap_blocks_edge
+    # expects. Without this the test would pass on a graph.py that ignored
+    # every existing trip.
+    clear_of_supply = mk_trip("OSL", "OSL", 5, 6, company="ollex", unit=1)
+    assert not edges_for(s, d, unit_trips=[s, clear_of_supply])
+
+
 def test_already_broken_successor_pair_does_not_block():
     s = mk_trip("STO", "CPH", 0, 3, company="ollex", unit=1)
     # successor is ALREADY out of window from s (gap 7, an enumerated

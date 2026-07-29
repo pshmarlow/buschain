@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import date, timedelta
 
 from buschain import contract
 from buschain.codecs.types import (
@@ -123,6 +123,36 @@ def test_adhoc_assignment():
 def test_start_after_end_rejected():
     r = check(row(start=date(2026, 5, 1), end=date(2026, 4, 1)))
     assert isinstance(r, NonOperableRow)
+
+
+def test_implausible_span_rejected_with_the_span_in_the_reason():
+    """A typo'd year: parses fine, ordered fine, but no trip here runs a year.
+
+    The reason has to carry the measured span and the limit — the whole point
+    is that the row looks ordinary until someone is told what is wrong with it.
+    """
+    r = check(row(start=date(2025, 4, 7), end=date(2026, 4, 16)))
+    assert isinstance(r, NonOperableRow)
+    assert any("374 days" in x and "60-day limit" in x for x in r.reasons), r.reasons
+
+
+def test_span_boundary_is_inclusive():
+    """Exactly at the limit is sound; one day past it is not. Pinned on both
+    sides so a later `>=`/`>` slip cannot pass unnoticed."""
+    start = date(2026, 4, 1)
+    ok = check(row(start=start, end=start + timedelta(days=contract.MAX_TRIP_SPAN_DAYS)))
+    assert isinstance(ok, Trip)
+    over = check(row(start=start,
+                     end=start + timedelta(days=contract.MAX_TRIP_SPAN_DAYS + 1)))
+    assert isinstance(over, NonOperableRow)
+
+
+def test_inverted_dates_do_not_also_report_a_span():
+    """One reason per thing to fix: an inverted pair has a negative span, and a
+    second complaint about its length would describe a consequence, not a cause."""
+    r = check(row(start=date(2026, 5, 1), end=date(2024, 4, 1)))
+    assert isinstance(r, NonOperableRow)
+    assert not any("limit" in x for x in r.reasons), r.reasons
 
 
 def test_iso_string_dates_accepted_for_csv():

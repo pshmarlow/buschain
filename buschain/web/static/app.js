@@ -228,7 +228,14 @@ function setColumnHidden(title, hidden) {
     // Its filter goes with it: viewRows walks only visible columns, so the
     // filter would silently stop applying yet survive — invisible in the
     // filter row, still counted by clearEmptiedView, resurrected on unhide.
-    for (const key of ["trips", "nonop"]) VIEWS[key].filters.delete(title);
+    // The sort goes for the same reason, and it read worse: viewRows finds no
+    // column to sort by and quietly leaves the rows in source order, so the
+    // table jumped back to unsorted with the sort mark gone and no way to see
+    // why — and unhiding re-applied a sort nobody asked for again.
+    for (const key of ["trips", "nonop"]) {
+      VIEWS[key].filters.delete(title);
+      if (VIEWS[key].sort === title) { VIEWS[key].sort = null; VIEWS[key].dir = 1; }
+    }
   } else {
     HIDDEN.delete(title);
   }
@@ -752,12 +759,14 @@ function decorateTripRow(tr, r, today) {
   tr.dataset.start = r.start;
   // The board's handle back into this table (jumpToDataRow).
   tr.dataset.trip = r.id;
-  // Keyed on the START date, not the end date, because the table is ordered by
-  // start date: the fade then falls as one clean boundary that lines up with
-  // the Start date column. Keying on the end date instead left long trips that
-  // began weeks ago but have not finished sitting at full strength among faded
-  // neighbours, which reads as rows being randomly emphasised rather than as
-  // information. The cost is that a trip running across today fades too.
+  // Keyed on the START date, not the end date. Keying on the end date instead
+  // left long trips that began weeks ago but have not finished sitting at full
+  // strength among faded neighbours, which reads as rows being randomly
+  // emphasised rather than as information; keyed on the start, the fade falls
+  // as one clean boundary down the Start date column whenever the table is in
+  // start-date order (sorted, or unsorted on a chronological sheet — the
+  // default order is the sheet's own, see Repo._trip_rows). The cost is that a
+  // trip running across today fades too.
   if (r.start < today) tr.classList.add("past");
 }
 
@@ -887,7 +896,16 @@ function tableColumns(cfg, key) {
     },
   });
   if (!HIDDEN.has(ROW_COLUMN)) {
+    /* Sorts on the number in the label, not on the label: both kinds of label
+       already carry the row the export will put them on (Repo.row_labels names
+       a manual row for the first free row below the data), so the number is
+       the real order and "new 1672" belongs after "row 1671". Comparing the
+       labels as text put every pasted row ABOVE row 2 ascending, on nothing
+       but "new" < "row". compareText's numeric:true handles the widths, so no
+       padding here. `text` stays the label — it is what the filter box and the
+       search match, and "row 12" has to keep finding row 12. */
     cols.push({ title: ROW_COLUMN, text: (r) => rowLabel(r.id),
+      key: (r) => rowLabel(r.id).replace(/^\D+/, ""),
       cell: (r) => el("td", {}, rowLabel(r.id)) });
   }
   if (cfg.extra) cols.push(cfg.extra);
@@ -934,12 +952,17 @@ function columnChoices(rows, col) {
 
 /* Cells are raw sheet text. numeric:true keeps "10" after "9" without treating
    the column as a number, and ISO dates already order correctly as text.
-   Blanks sort last in both directions — an empty cell is missing, not least. */
-function compareText(a, b) {
+   Blanks sort last in both directions — an empty cell is missing, not least.
+
+   The direction is applied HERE rather than by negating the result at the call
+   site, which is what the caller used to do: negating the whole comparator
+   negates the blank branch too, so descending put every empty cell first —
+   exactly the "missing reads as least" behaviour the line above rules out. */
+function compareText(a, b, dir) {
   if (a === b) return 0;
   if (a === "") return 1;
   if (b === "") return -1;
-  return a.localeCompare(b, undefined, { numeric: true });
+  return dir * a.localeCompare(b, undefined, { numeric: true });
 }
 
 function viewRows(cfg, cols, view, choices) {
@@ -966,8 +989,12 @@ function viewRows(cfg, cols, view, choices) {
   if (q) rows = rows.filter((r) => cols.some((c) => c.text(r).toLowerCase().includes(q)));
   if (view.sort) {
     const col = cols.find((c) => c.title === view.sort);
+    // `key` where a column sorts by something other than what it displays (the
+    // Row column); `text` — the displayed cell — everywhere else, so that what
+    // you filter and search on is what you sort on.
+    const sortKey = col && (col.key || col.text);
     // Copy first — with no filters applied `rows` is still the live state array.
-    if (col) rows = [...rows].sort((a, b) => view.dir * compareText(col.text(a), col.text(b)));
+    if (col) rows = [...rows].sort((a, b) => compareText(sortKey(a), sortKey(b), view.dir));
   }
   return rows;
 }
@@ -1982,9 +2009,8 @@ function boardRows() {
      ad hoc off this board" and not "fold it away" — the section header goes
      too. One consequence worth knowing: renderBoard takes the axis extent from
      the rows it is given, so hiding ad hoc can move the board's first and last
-     day. On the reference data that is 2025-04-08 → 2025-05-05 at the left
-     edge, far inside renderSpanWarning's threshold, but a dataset whose only
-     outlier is an ad hoc trip will visibly re-scale when this is unticked. */
+     day — a dataset whose earliest or latest trip is an ad hoc one will
+     visibly re-scale when this is unticked. */
   if (SHOW_ADHOC) {
     for (const [company, ids] of Object.entries(S.engine.adhoc_by_company)) {
       rows.push({
@@ -2598,20 +2624,15 @@ function sectionHeader(kind, rows) {
   return head;
 }
 
-/* A wrong year in one cell — the reference data has one — stretches the axis
-   over years and squeezes every real month into a few pixels. Name the
-   outliers rather than silently clipping data off the board. */
-function renderSpanWarning(days, all, t0, t1) {
-  const box = $("#board-warning");
-  box.replaceChildren();
-  box.classList.toggle("hidden", days <= 1100);
-  if (days <= 1100) return;
-  const first = all.find((t) => t.start === t0);
-  const last = all.find((t) => t.end === t1);
-  box.append(el("span", {}, `The board spans ${days} days (${t0} → ${t1}). `
-    + `Check the dates on ${tripLabel(first.id)} and ${tripLabel(last.id)} — `
-    + "one typo'd year stretches the whole axis."));
-}
+/* There was a span warning here, for the case of a typo'd year stretching the
+   axis over years and squeezing every real month into a few pixels. It is gone
+   because the contract now refuses those rows outright (MAX_TRIP_SPAN_DAYS in
+   contract.py), so they never reach the board to stretch anything — and one
+   home for the rule beats two that can drift apart. Worth knowing if you are
+   tempted to re-add it: the version that stood here for a long time triggered
+   on the board's TOTAL extent exceeding 1100 days, and the reference data's 76
+   typo'd-year rows only stretch that to 576, so it had never once fired on the
+   data it was written for. A per-row test is the one that works. */
 
 /* Chaining only moves buses you already have. When simultaneous uncovered
    demand exceeds the entire registered fleet, no sequence of accepts can close
@@ -3087,7 +3108,6 @@ function renderBoard(rows = null) {
   const sel = boardSelection();
   renderBoardDetail(sel);
   if (!all.length) {
-    $("#board-warning").classList.add("hidden");
     box.append(el("p", { class: "hint" }, "No trips to display."));
     return;
   }
@@ -3096,7 +3116,6 @@ function renderBoard(rows = null) {
   const t1 = all.reduce((m, t) => (t.end > m ? t.end : m), all[0].end);
   const idx = (iso) => Math.round((Date.parse(iso) - Date.parse(t0)) / DAY_MS);
   const days = idx(t1) + 1;
-  renderSpanWarning(days, all, t0, t1);
   box.style.setProperty("--day-w", DAY_W + "px");
 
   // Where the selection's candidates would land. Both directions reduce to

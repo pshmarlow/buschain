@@ -107,10 +107,17 @@ data preservation and rule fidelity above everything else.
   letter (the Fleets-column drift); anything writing to that sheet must carry
   its discovered column, not a constant. The seed's name-matching has a
   history (the 'Nordi Bus'/'Nordibuzz' incident cost 31 rows).
-- The reference data contains a tolerated typo'd-year row;
-  `_unit_timeline_ok` deliberately ignores trips overlapping the supply trip
-  so one bad row cannot freeze a unit — tightening that check breaks the
-  reference dataset.
+- The reference data contains 76 typo'd-year rows (366-376 day spans, where
+  every sound row spans 0-11). `contract.MAX_TRIP_SPAN_DAYS = 60` refuses them
+  into the non-operable list — the one heuristic in a module of objective
+  checks, justified by the empty 355-day gap between the two populations, and
+  refusal rather than repair. Changing or removing it moves AT2's pinned
+  1527/143 split and brings back 20 false fleet warnings.
+- `_unit_timeline_ok` deliberately ignores trips overlapping the supply trip so
+  a bad row cannot freeze a unit. No reference row exercises that branch since
+  the contract started refusing the typo'd-year rows, so
+  `test_links.py::test_trip_overlapping_the_supply_does_not_block` is the only
+  thing standing between it and a silent regression — do not delete it.
 - Excel's clipboard omits hidden columns with no trace, so paste correctness
   rests on the declared-columns picker (`codecs/paste.py`) — positional
   "fixes" reintroduce silently shifted rows that still validate.

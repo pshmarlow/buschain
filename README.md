@@ -175,6 +175,38 @@ Key decisions worth knowing before editing:
   the undo labels cannot disagree. The label is derived, not stored: deleting
   a sheet row below the data renumbers it, which beats freezing a number the
   exported file then contradicts. Its internal id stays the SQLite rowid.
+- **The Data table's sort has three rules that are not the obvious ones.**
+  Blanks sort last in *both* directions, because an empty cell is missing
+  rather than least — so the direction is applied inside `compareText`, not by
+  negating it at the call site, which used to flip the blank branch too. The
+  *Row* column sorts on the number in its label rather than the label, so
+  `new 1672` follows `row 1671` instead of leading the table on `"new" <
+  "row"`; ascending on Row therefore reproduces the unsorted order, which is
+  the source file's own (`Repo._trip_rows`, `ORDER BY id`). And hiding the
+  sorted column clears the sort, as hiding a filtered column already cleared
+  its filter — otherwise `viewRows` finds no column, silently drops to source
+  order, and the sort comes back when you unhide.
+- **A 370-day trip is a typo, and the contract refuses it.**
+  `contract.MAX_TRIP_SPAN_DAYS = 60` is the one *judgment* in a module whose
+  every other reason is objective, and it earns its place by measurement: the
+  reference workbook's 1594 sound rows span 0–11 days, its 76 typo'd-year rows
+  span 366–376, and nothing falls in between, so any threshold in that 355-day
+  gap separates them exactly. Before it those 76 passed every check and were
+  fully operable — invisible to every report, yet sorted above every real trip
+  by date, and actively poisoning the two reports they did reach: a 370-day
+  trip holds a numbered unit for a year, which was the sole cause of **all 20**
+  fleet over-commitment warnings and **all 4** overlap findings on the
+  reference data. Refusing them left coverage untouched (113 greedy, 124
+  solver, 190 demand) and took those to 0 and 0. It is refusal, not repair: the
+  date stays exactly as the sheet has it, the row is listed with its span and
+  the limit, and editing the cell re-validates it straight back (the store
+  re-runs the contract on every load). One consequence to know: no real row now
+  exercises `_unit_timeline_ok`'s supply-overlap tolerance, so
+  `test_links.py::test_trip_overlapping_the_supply_does_not_block` covers it
+  instead. A per-row check is also the only kind that works here — the board
+  banner this replaced triggered on the board's *total* extent exceeding 1100
+  days, which the reference data's 576 never reached, so the warning written
+  for exactly these rows had never once fired.
 - **The Information sheet owns the Nationality/OP pick lists**, in its own
   columns O and P — the same arrangement as the `Fleets` column. Import
   replaces the stored list from there; export writes the current list back,

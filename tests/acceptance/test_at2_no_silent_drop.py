@@ -33,8 +33,12 @@ def test_profile_counts_regression(dataset, registry):
     assert by_status[Status.CANCELED] <= 712
     # Pinned to the reference file (post-maintenance registry): any change
     # to these numbers means reader/normalization/contract behavior moved.
-    assert len(report.trips) == 1602
-    assert len(report.non_operable) == 68
+    # They moved once, deliberately: 75 rows whose start year is a year early
+    # (366-376 day spans) now fail contract.MAX_TRIP_SPAN_DAYS and are listed
+    # here rather than planned against. That was 1602/68 before. The split is
+    # what changed, never the total — the assertion above is the invariant.
+    assert len(report.trips) == 1527
+    assert len(report.non_operable) == 143
     demand = [t for t in report.trips
               if t.assignment is None and t.status is not Status.CANCELED]
     assert len(demand) == 190

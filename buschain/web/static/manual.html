@@ -359,9 +359,12 @@
   afterwards. A proposal never breaks a bus's schedule.
 </p>
 <p>
-  Existing problems in your data (a typo'd year putting a trip on top of
-  another) are <em>listed</em> in the integrity report, never silently fixed,
-  and they do not freeze the rest of that bus's schedule.
+  Existing problems in your data — one trip sitting on top of another on the
+  same bus — are <em>listed</em> in the integrity report, never silently fixed,
+  and they do not freeze the rest of that bus's schedule. The commonest cause,
+  a typo'd year stretching a trip across twelve months, no longer gets this far:
+  those rows are refused into the non-operable list, where you can fix the date
+  in place (chapters 5.2 and 5.3).
 </p>
 
 <h3>4.5 Empty runs only off the end of a chain</h3>
@@ -423,7 +426,7 @@
   <tr><td>Status</td><td><strong>Required.</strong> Exactly one of Confirmed, Pending, Canceled.</td></tr>
   <tr><td>Project</td><td>If filled, must be numeric. Not unique — a big group split across three buses shares one project id.</td></tr>
   <tr><td>Bus Preference</td><td>If filled, must resolve to a registry company, optionally prefixed <code>NO </code>. See 4.3.</td></tr>
-  <tr><td>Start date, End date</td><td><strong>Required.</strong> Real dates, and start ≤ end. Text that is not a date fails the row — it is never repaired or guessed.</td></tr>
+  <tr><td>Start date, End date</td><td><strong>Required.</strong> Real dates, start ≤ end, and no more than <strong>60 days apart</strong>. Text that is not a date fails the row — it is never repaired or guessed. The 60-day rule catches typo'd years: real trips here run 0–11 days, so a row spanning a year is a wrong digit, not a long charter. Nothing is corrected — the row is listed with its span and you fix the date.</td></tr>
   <tr><td>Departure, Arrival</td><td><strong>Required.</strong> Must resolve to a registry city code.</td></tr>
   <tr><td>Company name</td><td>If filled, must resolve to a registry company or one of its numbered units.</td></tr>
   <tr><td>Pax</td><td>Informational. Never fails a row.</td></tr>
@@ -516,7 +519,12 @@
       <em>Status</em> is the one multi-select: tick Confirmed <em>and</em>
       Pending to see “everything still live”.</li>
   <li><strong>Sort</strong> by clicking a header: ascending → descending → off.
-      Off is meaningful — it restores the source file's own row order.</li>
+      Off is meaningful — it restores the source file's own row order. Empty
+      cells sort to the bottom whichever direction you pick: a blank means the
+      value is missing, not that it is the smallest. <em>Row</em> sorts by row
+      number, so pasted rows (“new 1672”) land after the sheet rows they will
+      follow on export, and sorting <em>Row</em> ascending gives you the source
+      order back. Hiding the column you are sorted by turns the sort off.</li>
   <li><strong>Columns</strong> hides columns you do not use; the setting is
       remembered by your browser. P Notes, Nationality, OP, Quoted rate and
       C Notes start hidden.</li>
@@ -839,9 +847,6 @@
     needs capacity, not planning. If some of your buses are <em>stranded</em>,
     the note says that too — that part <em>is</em> recoverable by scheduling.
   </dd>
-  <dt>Span warning</dt>
-  <dd>If the board spans more than about three years it names the earliest and
-    latest trips — one typo'd year stretches the whole axis and is worth fixing.</dd>
   <dt>Fleet over-commitment warnings</dt>
   <dd>Per company per day, more simultaneous trips on numbered buses than that
     company has buses. Ad hoc assignments are deliberately excluded: they mean
@@ -1132,9 +1137,15 @@
       That is what the stranded list in the preview is for. Undo reverses the
       whole thing in one step.</dd>
 
-  <dt>The board spans years and everything is squashed.</dt>
-  <dd>A typo'd year on one row. The banner above the board names the two rows to
-      check.</dd>
+  <dt>A trip I expected is in the non-operable list, saying it spans too many
+      days.</dt>
+  <dd>Its two dates are more than 60 days apart, which here almost always means
+      a typo'd year in one of them — the reference workbook alone contains 76
+      such rows, mostly a start year one year early. Nothing has been changed:
+      the dates are exactly as the sheet has them, and the row exports
+      untouched. Fix the year in the row's date cell and it returns to the
+      operable list immediately. If you genuinely run trips longer than two
+      months, that limit is `MAX_TRIP_SPAN_DAYS` in <code>contract.py</code>.</dd>
 
   <dt>My pasted rows came in shifted / mostly non-operable.</dt>
   <dd>Hidden columns in Excel (chapter 5.5). Untick them in the paste form and

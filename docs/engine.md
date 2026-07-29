@@ -120,10 +120,14 @@ anyone. Hard filter, company-level.
 existing trip, no existing trip already sitting inside the gap, and if the unit
 has a later trip, that successor must still chain from the *demand* trip
 afterwards (unless the successor is ER-marked — its explicit repositioning
-covers the move). Two tolerances keep one bad row from freezing a whole bus:
+covers the move). Two tolerances keep a bad row from freezing a whole bus:
 trips already *overlapping* the supply trip are ignored here (they're
-pre-existing violations the integrity report enumerates — e.g. the typo'd-year
-row in the reference data), and a successor pair that was *already* broken
+pre-existing violations the integrity report enumerates — the case this was
+written for, the reference data's 76 typo'd-year rows, is now refused by
+`contract.MAX_TRIP_SPAN_DAYS` before it ever reaches the engine, which took the
+fixture's overlap findings from 4 to 0; the branch stays for overlaps arriving
+by other routes and is covered by `test_links.py`), and a successor pair that
+was *already* broken
 can't get vetoed further — inserting a trip into an already-invalid gap
 typically shrinks it.
 

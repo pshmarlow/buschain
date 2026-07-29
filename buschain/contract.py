@@ -23,6 +23,25 @@ from .model import (
 # an explicit ER for integrity labeling only (never matching logic).
 _NOT_ER = {"n/a", "na", "no", "n", "-"}
 
+# The one judgment call in this module: every other reason here is objective
+# ("not a date", "not a registry city"), while this one asks whether a parsed
+# pair of dates is *plausible*. It earns its place by measurement. On the
+# reference workbook's 1670 rows the 1594 sound ones span 0-11 days and 76 with
+# a typo'd start year span 366-376, with nothing whatsoever in between — so any
+# threshold inside that 355-day gap separates the two populations exactly. 60
+# sits far above the longest real trip and far below a full year, which also
+# catches a typo landing short of one.
+#
+# Refusing them is what makes them visible: they pass every other check, so
+# before this they were fully operable and invisible to every report while
+# sorting to the top of any date order. They also poisoned the reports they did
+# reach — a 370-day trip on a numbered unit occupies that bus for a year, which
+# was the sole source of all 20 fleet over-commitment warnings and all 4 overlap
+# findings on the reference data. This is refusal, never repair: the date is
+# left exactly as the sheet has it, the row is listed with the reason below, and
+# editing the cell re-validates it straight back into the operable set.
+MAX_TRIP_SPAN_DAYS = 60
+
 
 def _as_str(value: object) -> str:
     if value is None:
@@ -121,6 +140,15 @@ def validate_row(row: RawTripRow, trip_id: TripId, registry: Registry) -> Trip |
         reasons.append(f"End date {s[END_DATE]!r} is not a valid date")
     if start is not None and end is not None and start > end:
         reasons.append(f"Start date {start.isoformat()} is after end date {end.isoformat()}")
+    # Only when the pair is otherwise sound: an inverted or unparseable date
+    # already has its reason, and a second one about the span would describe a
+    # consequence rather than a thing to fix.
+    elif start is not None and end is not None and (end - start).days > MAX_TRIP_SPAN_DAYS:
+        reasons.append(
+            f"Start date {start.isoformat()} to end date {end.isoformat()} spans "
+            f"{(end - start).days} days, over the {MAX_TRIP_SPAN_DAYS}-day limit "
+            f"— check for a typo'd year"
+        )
 
     dep = registry.resolve_city(s[DEPARTURE]) if s[DEPARTURE] else None
     if dep is None:
