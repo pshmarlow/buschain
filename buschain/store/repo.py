@@ -23,8 +23,8 @@ from ..codecs import seed
 from ..codecs.seed import SeedResult
 from ..codecs.types import (
     ALL_COLUMNS, CellWrite, COLUMN_LETTERS, COLUMN_TITLES, COMPANY_NAME,
-    ExportPlan, ImportedDataset, INFO_OPTION_COLS, InfoCellWrite, InfoWrite,
-    NewRow, OPTION_COLUMNS, RawTripRow, STATUS,
+    CITY_HEADER, ExportPlan, ImportedDataset, INFO_CITY_COL, INFO_OPTION_COLS,
+    InfoCellWrite, InfoWrite, NewRow, OPTION_COLUMNS, RawTripRow, STATUS,
 )
 from ..model import (
     AcceptedLink, Company, ContractReport, Registry, Status, Trip, TripId,
@@ -37,6 +37,37 @@ def _jsonable(value: object) -> object:
     if isinstance(value, date):
         return value.isoformat()
     return value
+
+
+def _column_writes(
+    title: str, default_col: str, values: list[str],
+    existing: seed.SheetOptionList | None,
+) -> list[InfoCellWrite]:
+    """One list-valued Information column, written back if it disagrees.
+
+    Compared as sets, not sequences: the list is a set semantically, so
+    rewriting a whole column purely to reorder it would churn the file on every
+    export for no gain, and leaves an order the user chose in Excel alone. When
+    the contents do differ the column is rewritten sorted, and cells below the
+    new last value are emptied — otherwise a pruned entry would survive in the
+    sheet as a trailing leftover.
+
+    A column the sheet does not head yet is created, header included: this is
+    how a workbook that predates a list acquires it.
+    """
+    if existing is None and not values:
+        return []                             # nothing to say, no column to make
+    if existing is not None and set(existing.values) == set(values):
+        return []
+    column = existing.column if existing is not None else default_col
+    out: list[InfoCellWrite] = []
+    if existing is None:
+        out.append(InfoCellWrite(1, column, title))
+    out.extend(InfoCellWrite(2 + i, column, v) for i, v in enumerate(values))
+    last_row = existing.last_row if existing is not None else 1
+    out.extend(InfoCellWrite(row, column, "")
+               for row in range(2 + len(values), last_row + 1))
+    return out
 
 
 class RepoError(ValueError):
@@ -431,6 +462,61 @@ class Repo:
                     t for t in seed_result.options if t in OPTION_COLUMNS)),),
             )
 
+    def sync_cities(self, seed_result: SeedResult) -> list[str]:
+        """Apply the Information sheet's 'Cities' column to the registry.
+
+        The sheet owns the list, as it owns fleet counts and pick lists, so
+        this runs on every xlsx import and is idempotent. A workbook that does
+        not head the column says nothing and changes nothing.
+
+        Unlike sync_options this cannot just delete what the sheet dropped.
+        The contract resolves Departure/Arrival against these codes, so
+        removing one in Excel would push every trip using it out of the
+        operable set — silently, on import, with the rows blaming a city that
+        no longer exists. Same answer as sync_fleets gives a unit that still
+        carries trips: keep it, and say so. A registry one city stale is far
+        cheaper than an import that quietly broke rows on its way through.
+        Removing it for real stays a Registry-tab action, where remove_city
+        names the trips first.
+        """
+        if seed_result.city_list is None:
+            return []
+        target = {
+            code for code in (
+                normalize.collapse_ws(normalize.trim(c))
+                for c in seed_result.city_list.values
+            ) if code
+        }
+        warnings: list[str] = []
+        with self._write_lock:
+            current = {
+                row["code"] for row in
+                self.conn.execute("SELECT code FROM registry_cities")
+            }
+            # Only when something would actually be dropped: load_state parses
+            # and re-validates the whole dataset, far too costly to spend on
+            # the common import where the list is unchanged or only grew.
+            in_use: set[str] = set()
+            if current - target:
+                report, _, _ = self.load_state()
+                for t in report.trips:
+                    if t.status is not Status.CANCELED:
+                        in_use.update((t.dep_city, t.arr_city))
+            with self.conn:
+                for code in sorted(target - current):
+                    self._add_city(code)
+                for code in sorted(current - target):
+                    if code in in_use:
+                        warnings.append(
+                            f"City {code!r}: kept, because live trips still depart "
+                            "from or arrive there. Remove it in the Registry tab, "
+                            "which lists those trips first."
+                        )
+                        continue
+                    self.conn.execute(
+                        "DELETE FROM registry_cities WHERE code = ?", (code,))
+        return warnings
+
     def _sheet_owned_options(self) -> set[str]:
         row = self.conn.execute(
             "SELECT value FROM meta WHERE key = 'options_from_sheet'").fetchone()
@@ -635,14 +721,21 @@ class Repo:
         return TripId("manual", row["id"])
 
     def row_labels(self) -> dict[str, str]:
-        """How each row is named on screen, keyed by 'origin:key'.
+        """How each row is numbered on screen, keyed by 'origin:key'.
 
-        A sheet row is its sheet row. A manual row is named for the row it will
-        take in the exported sheet — the first free row below the data plus its
-        place in the queue, the same rule `_append_rows` follows at export
-        time. Its own key is the SQLite rowid, which counts every row of every
-        dataset ever imported ('new 13361' on the ninth import of a 1670-row
-        sheet) and means nothing to anyone.
+        Just the number, as a string. A sheet row is its sheet row. A manual
+        row gets the row it will take in the exported sheet — the first free
+        row below the data plus its place in the queue, the same rule
+        `_append_rows` follows at export time. Its own key is the SQLite rowid,
+        which counts every row of every dataset ever imported (13361 on the
+        ninth import of a 1670-row sheet) and means nothing to anyone.
+
+        Bare numbers, with no 'row'/'new' word in front: the number alone is
+        the row's identity, and prose that needs a noun says "row {label}" at
+        the point it is written (see api._where). The two kinds cannot collide
+        — a manual row always numbers above the last sheet row — so dropping
+        the word costs no information beyond which rows arrived by paste, and
+        that is what the table's own ordering already shows.
 
         Derived, not stored, and that is the tradeoff: deleting a sheet row
         below the data renumbers these. Storing them instead would freeze a
@@ -659,10 +752,10 @@ class Repo:
         for row in rows:
             tid = self._trip_id(row)
             if row["origin"] == "sheet":
-                labels[f"sheet:{tid.key}"] = f"row {tid.key}"
+                labels[f"sheet:{tid.key}"] = str(tid.key)
             else:
                 manual += 1
-                labels[f"manual:{tid.key}"] = f"new {last_sheet_row + manual}"
+                labels[f"manual:{tid.key}"] = str(last_sheet_row + manual)
         return labels
 
     def _overrides_for(self, trip_db_id: int) -> dict[str, str]:
@@ -1355,20 +1448,15 @@ class Repo:
         on_sheet = seed.sheet_option_lists(grid)
         out: list[InfoCellWrite] = []
         for title, default_col in INFO_OPTION_COLS.items():
-            values = sorted(stored.get(title, []))
-            existing = on_sheet.get(title)
-            if existing is None and not values:
-                continue                      # nothing to say, no column to make
-            if existing is not None and set(existing.values) == set(values):
-                continue
-            column = existing.column if existing is not None else default_col
-            if existing is None:
-                out.append(InfoCellWrite(1, column, title))
-            out.extend(InfoCellWrite(2 + i, column, v)
-                       for i, v in enumerate(values))
-            last_row = existing.last_row if existing is not None else 1
-            out.extend(InfoCellWrite(row, column, "")
-                       for row in range(2 + len(values), last_row + 1))
+            out.extend(_column_writes(
+                title, default_col, sorted(stored.get(title, [])), on_sheet.get(title)))
+        # The city registry rides the same machinery — same shape, same
+        # create-the-column-if-absent rule — but is not a pick list: see
+        # types.CITY_HEADER on why it is kept out of INFO_OPTION_COLS.
+        out.extend(_column_writes(
+            CITY_HEADER, INFO_CITY_COL,
+            sorted(self.registry().cities.values()),
+            seed.sheet_city_list(grid)))
         return tuple(out)
 
     def unwritable_companies(self) -> list[str]:

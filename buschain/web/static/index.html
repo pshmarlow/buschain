@@ -194,14 +194,17 @@ rules the planner uses (takes a few seconds). Shows the result before writing an
       <label><input type="checkbox" id="show-adhoc" checked> Ad hoc</label>
       <button class="btn small undo-btn" disabled>↶ Nothing to undo</button>
       <span id="board-legend">
+        <span class="legend-head">Colour = status:</span>
         <span><i class="swatch sw-confirmed"></i>Confirmed</span>
         <span><i class="swatch sw-pending"></i>Pending</span>
-        <span><i class="swatch sw-uncovered"></i>Uncovered — actionable</span>
+        <span><i class="swatch sw-canceled"></i>Canceled</span>
+        <span class="legend-head legend-sep">Fill and edge = state:</span>
+        <span><i class="swatch sw-texture sw-actionable"></i>Uncovered — actionable</span>
+        <span><i class="swatch sw-texture sw-later"></i>Opens up later</span>
+        <span><i class="swatch sw-texture sw-never"></i>No same-city chain</span>
         <span><i class="swatch sw-planned"></i>Planned (provisional)</span>
         <span><i class="swatch sw-reposition"></i>Planned — needs an empty run</span>
-        <span><i class="swatch sw-later"></i>Opens up later</span>
-        <span><i class="swatch sw-never"></i>No same-city chain</span>
-        <span><i class="swatch sw-adhoc"></i>Ad hoc</span>
+        <span><i class="swatch sw-adhoc"></i>Ad hoc lane</span>
         <span><i class="swatch sw-ghost"></i>Candidate slot</span>
         <span><i class="swatch sw-link"></i>Accepted chain link</span>
         <span><i class="swatch sw-er-link"></i>Accepted empty run</span>

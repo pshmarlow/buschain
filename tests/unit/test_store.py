@@ -571,3 +571,58 @@ def test_a_workbook_without_the_columns_leaves_the_list_alone(repo):
     assert repo.options()["Nationality"] == ["Norwegian"]
     repo.remove_option("Nationality", "Norwegian")
     assert repo.options()["Nationality"] == ["Korea", "Swedish"]      # refilled
+
+
+# -- the Information sheet's Cities column ----------------------------------
+
+def _city_seed(*codes):
+    """A SeedResult whose sheet states exactly these cities."""
+    from buschain.codecs.seed import SeedResult, SheetOptionList
+    return SeedResult(
+        companies=[], cities=[],
+        city_list=SheetOptionList(column="Q", values=tuple(codes),
+                                  last_row=1 + len(codes)),
+    )
+
+
+def test_sync_cities_adds_what_the_sheet_gained(repo):
+    seeded(repo)
+    before = set(repo.registry().cities.values())
+    assert repo.sync_cities(_city_seed(*before, "Turku")) == []
+    assert "Turku" in repo.registry().cities.values()
+
+
+def test_sync_cities_drops_what_the_sheet_pruned(repo):
+    """The sheet owns the list, so a code deleted in Excel stays deleted —
+    the same rule sync_options follows for the pick lists."""
+    seeded(repo)
+    repo.add_city("Nowhere")
+    assert "Nowhere" in repo.registry().cities.values()
+    keep = [c for c in repo.registry().cities.values() if c != "Nowhere"]
+    assert repo.sync_cities(_city_seed(*keep)) == []
+    assert "Nowhere" not in repo.registry().cities.values()
+
+
+def test_sync_cities_keeps_a_city_live_trips_still_use(repo):
+    """Where sync_options may delete freely, this may not: the contract
+    resolves Departure/Arrival against these codes, so honouring the deletion
+    would push live rows out of the operable set silently, mid-import. Kept
+    and reported instead — the same answer sync_fleets gives a unit that still
+    carries trips."""
+    seeded(repo)
+    import_rows(repo, RawTripRow(2, trip_values(dep="STO", arr="CPH")))
+    warnings = repo.sync_cities(_city_seed("OSL"))
+    assert any("STO" in w for w in warnings) and any("CPH" in w for w in warnings)
+    assert {"STO", "CPH"} <= set(repo.registry().cities.values())
+    # ... while a code nothing uses still goes.
+    assert "BGO" not in repo.registry().cities.values()
+
+
+def test_sync_cities_does_nothing_when_the_sheet_heads_no_column(repo):
+    """Absent is not empty: a workbook that predates the column must not wipe
+    the registry on import."""
+    from buschain.codecs.seed import SeedResult
+    seeded(repo)
+    before = dict(repo.registry().cities)
+    assert repo.sync_cities(SeedResult(companies=[], cities=[])) == []
+    assert repo.registry().cities == before

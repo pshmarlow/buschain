@@ -21,14 +21,16 @@ from openpyxl.utils import get_column_letter
 
 from .. import normalize
 from ..model import Company, Registry
-from .types import INFO_FLEET_COL, INFO_OPTION_COLS, INFO_SHEET
+from .types import CITY_HEADER, INFO_FLEET_COL, INFO_OPTION_COLS, INFO_SHEET
 
 COMPANY_HEADER = "Bus Companies"
 FLEET_HEADER = "Fleets"
 NOTE_HEADER = "Notes"                 # note text; the company label sits in column A
 
-# Initial closed city registry: values observed as plain canonical codes in
-# the reference data. Registry is CRUD-editable in-app; whether e.g. STV and
+# Fallback city registry, used ONLY when the Information sheet has no 'Cities'
+# column to read: values observed as plain canonical codes in the reference
+# data, which predates that column. A workbook that heads the column owns the
+# list instead. Registry is CRUD-editable in-app; whether e.g. STV and
 # Stavanger should alias to one code is a user registry decision, not ours.
 DEFAULT_CITIES: tuple[str, ...] = (
     "STO", "OSL", "CPH", "BGO", "HEL", "STV",
@@ -65,6 +67,18 @@ class SeedResult:
     # heads. Carried here rather than read separately so an import parses the
     # workbook once; the store consumes them, the Registry model does not.
     options: dict[str, SheetOptionList] = field(default_factory=dict)
+    # What the sheet's 'Cities' column says, or None when it heads no such
+    # column. Repo.sync_cities needs that distinction: "the sheet says none"
+    # and "the sheet does not say" must not mean the same thing.
+    city_list: SheetOptionList | None = None
+
+    def __post_init__(self) -> None:
+        # The sheet owns the list whenever it states one, so `cities` is
+        # reconciled here rather than by the caller: they are two views of one
+        # fact, and a SeedResult whose two views disagreed would seed a
+        # registry the sheet does not describe.
+        if self.city_list is not None:
+            self.cities = list(self.city_list.values)
 
     def fleets(self) -> dict[str, int]:
         """canonical key -> chartered vehicle count, for Repo.sync_fleets."""
@@ -193,40 +207,58 @@ def sheet_fleets(grid: list[list[object]]) -> list[tuple[int, str, int | None]]:
     ]
 
 
-def sheet_option_lists(grid: list[list[object]]) -> dict[str, SheetOptionList]:
-    """Pick lists off their own columns on the Information sheet.
+def sheet_column_list(grid: list[list[object]], title: str) -> SheetOptionList | None:
+    """One header-titled column of the Information sheet, read as a list.
 
-    A column the sheet does not head is absent from the result rather than
-    present and empty. The distinction is the whole safety of the sync: the
-    sheet having nothing to say about a list must not clear it, while a headed
-    column the user emptied in Excel must.
+    None when the sheet does not head that column, rather than an empty list.
+    The distinction is the whole safety of the sync: the sheet having nothing
+    to say about a list must not clear it, while a headed column the user
+    emptied in Excel must.
 
     Located by header like 'Bus Companies' is, not by the fixed letter, so a
     column inserted to the left does not silently repoint the reader at the
     wrong values — and, worse on this path, get them written back there.
     """
+    col = _header_index(grid, title)
+    if col is None:
+        return None
+    values: list[str] = []
+    seen: set[str] = set()
+    last_row = 1                                  # the header row itself
+    for i, row in enumerate(grid[1:], start=2):
+        raw = _cell(row, col)
+        if raw is None:
+            continue
+        last_row = i                              # counts even if it trims away
+        text = normalize.collapse_ws(normalize.trim(str(raw)))
+        if text and text not in seen:
+            seen.add(text)
+            values.append(text)
+    return SheetOptionList(
+        column=get_column_letter(col + 1), values=tuple(values), last_row=last_row,
+    )
+
+
+def sheet_option_lists(grid: list[list[object]]) -> dict[str, SheetOptionList]:
+    """The passthrough-column pick lists, keyed by title. Absent titles are
+    columns the sheet does not head — see sheet_column_list."""
     out: dict[str, SheetOptionList] = {}
     for title in INFO_OPTION_COLS:
-        col = _header_index(grid, title)
-        if col is None:
-            continue
-        values: list[str] = []
-        seen: set[str] = set()
-        last_row = 1                              # the header row itself
-        for i, row in enumerate(grid[1:], start=2):
-            raw = _cell(row, col)
-            if raw is None:
-                continue
-            last_row = i                          # counts even if it trims away
-            text = normalize.collapse_ws(normalize.trim(str(raw)))
-            if text and text not in seen:
-                seen.add(text)
-                values.append(text)
-        out[title] = SheetOptionList(
-            column=get_column_letter(col + 1), values=tuple(values),
-            last_row=last_row,
-        )
+        lst = sheet_column_list(grid, title)
+        if lst is not None:
+            out[title] = lst
     return out
+
+
+def sheet_city_list(grid: list[list[object]]) -> SheetOptionList | None:
+    """The city registry as the Information sheet states it.
+
+    Same shape and same reader as the pick lists, but a different thing: the
+    contract resolves Departure/Arrival against these codes, so this column
+    decides which rows are operable. Repo.sync_cities is correspondingly more
+    careful than sync_options — it will not drop a code that live trips use.
+    """
+    return sheet_column_list(grid, CITY_HEADER)
 
 
 def read_seed(blob: bytes) -> SeedResult:
@@ -272,6 +304,25 @@ def read_seed(blob: bytes) -> SeedResult:
         if key is not None and companies[key].note is None:
             companies[key].note = note
 
+    # A headed but wholly blank Fleets column registers nothing, exactly as a
+    # missing one does, and used to do it in complete silence: _fleet_count
+    # reads a blank cell as 0, which is a legitimate answer per company, so no
+    # per-row warning fires either. A fresh season's workbook arrives in
+    # precisely this state, and the symptom — every company present, nothing
+    # chainable, no explanation — is the one this warning exists to prevent.
+    if fleet_col is not None and companies and not any(c.units for c in companies.values()):
+        result.warnings.append(
+            f"The {FLEET_HEADER!r} column is empty, so none of the "
+            f"{len(companies)} companies has a chartered vehicle and nothing can "
+            "be chained. Fill it in beside 'Bus Companies' and re-import, or add "
+            "units in the Registry tab."
+        )
+
     result.companies = list(companies.values())
     result.options = sheet_option_lists(grid)
+    # Assigned after construction, so __post_init__'s reconcile is repeated
+    # here: DEFAULT_CITIES stands only for a workbook that heads no column.
+    result.city_list = sheet_city_list(grid)
+    if result.city_list is not None:
+        result.cities = list(result.city_list.values)
     return result

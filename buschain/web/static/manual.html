@@ -113,8 +113,13 @@
 <h3>2.2 Import the workbook</h3>
 <p>
   On the <strong>Data</strong> tab press <em>Import xlsx/csv</em> and pick your
-  planner file. The app reads the sheet named <code>Capitals 2026</code>,
-  header on row 1.
+  planner file. The app reads the trip sheet — named <code>Capitals 2026</code>
+  or <code>CAPITALS</code>, since the tab gets renamed each season — with the
+  header on row 1. If a season arrives under a name it does not know, the
+  import says so and names the sheets it did find; adding the new name is a
+  one-line change. The header row is checked either way, so the app will
+  refuse a sheet whose columns have shifted rather than read every value one
+  slot off.
 </p>
 <p>
   Importing <strong>replaces</strong> the current working dataset, so you are
@@ -470,8 +475,10 @@
   same contract, so a bad row lands in Non-operable with its reasons rather than
   being rejected at the form.</p>
 <p>
-  Manual rows are named for the sheet row they <em>will</em> occupy on export —
-  <code>new 1672</code> — so the label matches the file you are about to send.
+  Manual rows are numbered for the sheet row they <em>will</em> occupy on
+  export — <code>1672</code> — so the Row column matches the file you are about
+  to send. They always number above the last row of the sheet, which is why
+  they sit at the bottom until you sort by something else.
 </p>
 
 <h3>5.5 Pasting rows from the sheet</h3>
@@ -522,9 +529,9 @@
       Off is meaningful — it restores the source file's own row order. Empty
       cells sort to the bottom whichever direction you pick: a blank means the
       value is missing, not that it is the smallest. <em>Row</em> sorts by row
-      number, so pasted rows (“new 1672”) land after the sheet rows they will
-      follow on export, and sorting <em>Row</em> ascending gives you the source
-      order back. Hiding the column you are sorted by turns the sort off.</li>
+      number, so pasted rows land after the sheet rows they will follow on
+      export, and sorting <em>Row</em> ascending gives you the source order
+      back. Hiding the column you are sorted by turns the sort off.</li>
   <li><strong>Columns</strong> hides columns you do not use; the setting is
       remembered by your browser. P Notes, Nationality, OP, Quoted rate and
       C Notes start hidden.</li>
@@ -728,15 +735,31 @@
 </p>
 
 <h3>7.2 The colours</h3>
+<p>
+  <strong>Colour is always the status</strong>, in every lane of the board:
+  green Confirmed, yellow Pending, red Canceled. A trip does not change colour
+  because of where it sits — an uncovered Confirmed trip is the same green as a
+  Confirmed trip already on a bus. Lanes differ a little in strength (the
+  uncovered lane is turned up, the ad hoc lane down) but never in hue.
+</p>
 <table class="manual-table">
   <tr><th>Colour</th><th>Meaning</th></tr>
-  <tr><td>Confirmed / Pending</td><td>A committed trip, firm or at risk.</td></tr>
-  <tr><td>Uncovered — actionable</td><td>No bus yet, and the planner has at least one candidate for it.</td></tr>
-  <tr><td>Planned (provisional)</td><td>The plan proposes a bus. Nothing is written.</td></tr>
-  <tr><td>Planned — needs an empty run</td><td>As above, but the bus must be driven over first.</td></tr>
-  <tr><td>Opens up later</td><td>No candidate <em>today</em>, but some sequence of accepts could reach it. It is waiting on an earlier decision.</td></tr>
-  <tr><td>No same-city chain</td><td>No sequence of accepts can reach it. It needs an ad hoc bus, a subcontractor, or an empty run.</td></tr>
-  <tr><td>Ad hoc</td><td>Assigned to a company, not a bus.</td></tr>
+  <tr><td>Green</td><td>Confirmed.</td></tr>
+  <tr><td>Yellow</td><td>Pending — committed but at risk.</td></tr>
+  <tr><td>Red, struck through</td><td>Canceled. Hidden unless <em>Show canceled</em> is ticked.</td></tr>
+</table>
+<p>
+  Everything else a bar has to tell you is in its <strong>fill and its
+  edge</strong>, so it can say it without spending the colour:
+</p>
+<table class="manual-table">
+  <tr><th>Fill / edge</th><th>Meaning</th></tr>
+  <tr><td>Solid, bold text</td><td>Uncovered and actionable: no bus yet, and the planner has at least one candidate for it.</td></tr>
+  <tr><td>Dashed edge</td><td>Opens up later. No candidate <em>today</em>, but some sequence of accepts could reach it. It is waiting on an earlier decision.</td></tr>
+  <tr><td>Dotted edge, faded</td><td>No same-city chain reaches it. It needs an ad hoc bus, a subcontractor, or an empty run.</td></tr>
+  <tr><td>Diagonal hatching</td><td>Planned — the plan proposes a bus, nothing is written. Hatching always means provisional; a solid bar is real.</td></tr>
+  <tr><td>Tighter hatching, dotted edge</td><td>Planned, but the bus must be driven over empty first.</td></tr>
+  <tr><td>Purple row band</td><td>The ad hoc lane: assigned to a company, not a bus. The band marks the lane; the bars in it still show their own status.</td></tr>
   <tr><td>Candidate slot (“ghost”)</td><td>An empty outline on a bus's row: a trip that bus could legally take, right there in the calendar.</td></tr>
   <tr><td>Accepted chain link / accepted empty run</td><td>The connector drawn between two trips someone actually chained.</td></tr>
 </table>
@@ -956,6 +979,21 @@
   A closed list of canonical codes. Add the code exactly as the sheet spells it.
   Case and the <code>trf</code> suffix are handled for you; anything else is a
   different city.
+</p>
+<p>
+  The list lives in the workbook, in the <em>Information</em> sheet's
+  <strong>Cities</strong> column: an import reads it, an export writes the
+  current list back, creating the column if your workbook has not got one yet.
+  A workbook that heads no such column leaves the registry alone — saying
+  nothing is not the same as saying “no cities”.
+</p>
+<p class="manual-note">
+  One difference from the two pick lists below, and it matters: trips are
+  validated against <em>these</em> codes. So if you delete a city in Excel and
+  re-import, the app will <strong>not</strong> silently drop it while live
+  trips still depart from or arrive there — it keeps the code and tells you.
+  Removing it for real is done here, where the app first lists the trips that
+  would be affected.
 </p>
 
 <h3>9.4 Nationality and OP pick lists</h3>

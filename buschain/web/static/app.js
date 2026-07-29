@@ -657,15 +657,15 @@ function beginEdit(td) {
    you click to edit. It stays a question even though undo would cover it:
    noticing you deleted the wrong row is the hard part, not reversing it. */
 async function deleteRow(rowId, key) {
-  if (!confirm(`Delete ${rowLabel(rowId)}?\n\n`
+  if (!confirm(`Delete ${rowName(rowId)}?\n\n`
       + "It leaves the working set — no validation, no chaining, no plan — and "
       + "is dropped from the exported sheet. Undo puts it back.")) return;
   try {
     await api(`/trips/${rowId}`, { method: "DELETE" });
-    toast(`Deleted ${rowLabel(rowId)}`);
+    toast(`Deleted ${rowName(rowId)}`);
     if (SEL === rowId) SEL = null;
     await refresh();
-    clearEmptiedView(key, rowLabel(rowId));
+    clearEmptiedView(key, rowName(rowId));
   } catch (err) { toast(err.message, true); }
 }
 
@@ -690,7 +690,7 @@ async function deleteSelected(key) {
   const ids = [...SELECTED[key]];
   if (!ids.length) return;
   const what = ids.length === 1
-    ? rowLabel(ids[0]) : `${ids.length} selected rows`;
+    ? rowName(ids[0]) : `${ids.length} selected rows`;
   if (!confirm(`Delete ${what}?\n\n`
       + "They leave the working set — no validation, no chaining, no plan — and "
       + "are dropped from the exported sheet. One Undo puts them all back.")) return;
@@ -734,12 +734,16 @@ function renderColumnToggles() {
       title)));
 }
 
-/* The server names rows (see Repo.row_labels): a manual row is called for the
-   sheet row it will occupy on export, which its own key — a rowid counting
-   every row of every dataset ever imported — cannot tell anyone. The fallback
-   is the old rendering, for a state fetched before labels existed. */
+/* The server numbers rows (see Repo.row_labels): a manual row takes the sheet
+   row it will occupy on export, which its own key — a rowid counting every row
+   of every dataset ever imported — cannot tell anyone. Just the number, which
+   is what the Row column shows; prose adds the noun via rowName below. The
+   fallback strips the origin for a state fetched before labels existed. */
 const rowLabel = (id) => (S.labels && S.labels[id])
-  || id.replace("sheet:", "row ").replace("manual:", "new ");
+  || id.replace(/^(sheet|manual):/, "");
+/* For sentences — "Delete row 8?" — where the bare number would read as a
+   count rather than as a place. Never used in the Row column itself. */
+const rowName = (id) => `row ${rowLabel(id)}`;
 
 /* Today in the user's own timezone, as ISO. Built by hand rather than sliced
    off toISOString(), which is UTC — west of Greenwich that reports yesterday
@@ -878,7 +882,7 @@ function tableColumns(cfg, key) {
     cell: (r) => {
       const box = el("input", { type: "checkbox",
         title: "Tick — shift-click ticks the whole range from your last tick",
-        "aria-label": `Select ${rowLabel(r.id)}`,
+        "aria-label": `Select ${rowName(r.id)}`,
         checked: SELECTED[key].has(r.id) });
       // syncTickBoxes re-ticks boxes in place and needs to know whose is whose.
       box.dataset.row = r.id;
@@ -896,16 +900,13 @@ function tableColumns(cfg, key) {
     },
   });
   if (!HIDDEN.has(ROW_COLUMN)) {
-    /* Sorts on the number in the label, not on the label: both kinds of label
-       already carry the row the export will put them on (Repo.row_labels names
-       a manual row for the first free row below the data), so the number is
-       the real order and "new 1672" belongs after "row 1671". Comparing the
-       labels as text put every pasted row ABOVE row 2 ascending, on nothing
-       but "new" < "row". compareText's numeric:true handles the widths, so no
-       padding here. `text` stays the label — it is what the filter box and the
-       search match, and "row 12" has to keep finding row 12. */
+    /* The label IS the number (Repo.row_labels), which is the export row for
+       sheet and pasted rows alike, so sorting and displaying it are the same
+       thing and compareText's numeric:true keeps 2 before 1672 without
+       padding. This carried a separate `key` while the labels read "row 12" /
+       "new 1672": comparing those as text put every pasted row above row 2
+       ascending, on nothing but "new" < "row". */
     cols.push({ title: ROW_COLUMN, text: (r) => rowLabel(r.id),
-      key: (r) => rowLabel(r.id).replace(/^\D+/, ""),
       cell: (r) => el("td", {}, rowLabel(r.id)) });
   }
   if (cfg.extra) cols.push(cfg.extra);
@@ -925,7 +926,7 @@ function tableColumns(cfg, key) {
     text: () => "",
     cell: (r) => {
       const btn = el("button", { class: "btn small row-del",
-        title: `Delete ${rowLabel(r.id)}` }, "×");
+        title: `Delete ${rowName(r.id)}` }, "×");
       btn.dataset.row = r.id;
       return el("td", { class: "row-actions" }, btn);
     },
@@ -989,12 +990,12 @@ function viewRows(cfg, cols, view, choices) {
   if (q) rows = rows.filter((r) => cols.some((c) => c.text(r).toLowerCase().includes(q)));
   if (view.sort) {
     const col = cols.find((c) => c.title === view.sort);
-    // `key` where a column sorts by something other than what it displays (the
-    // Row column); `text` — the displayed cell — everywhere else, so that what
-    // you filter and search on is what you sort on.
-    const sortKey = col && (col.key || col.text);
+    // Sorted on the same text that is filtered, searched and displayed — one
+    // column, one value, so the order can never disagree with what is on
+    // screen. (Row briefly needed its own sort key, back when its cell read
+    // "row 12" rather than 12.)
     // Copy first — with no filters applied `rows` is still the live state array.
-    if (col) rows = [...rows].sort((a, b) => compareText(sortKey(a), sortKey(b), view.dir));
+    if (col) rows = [...rows].sort((a, b) => compareText(col.text(a), col.text(b), view.dir));
   }
   return rows;
 }
@@ -2347,10 +2348,16 @@ function boardSelection() {
 }
 
 function tripBar(t, row, laneIdx, isOverlap, ctx) {
-  const cls = ["bar"];
+  /* The status class goes on FIRST and unconditionally, in every section: it
+     is what colours the bar (see .bar.confirmed/.pending/.canceled), and the
+     classes pushed below only ever change texture, weight or gamma. Adding it
+     in the else-branch instead — which is what this did while the uncovered
+     and ad hoc lanes had hues of their own — meant a Confirmed trip was green
+     on a unit row, orange in the uncovered lane and purple in ad hoc. */
+  const cls = ["bar", t.status.toLowerCase()];
   let note = "";
   const link = t.assignment ? null : ctx.planned.get(t.id);
-  if (t.status === "Canceled") cls.push("canceled");
+  if (t.status === "Canceled") { /* status class is the whole story */ }
   /* Checked before the row kind: a planned trip drawn on a unit row would
      otherwise pick up that row's committed styling and read as assigned. It is
      not — nothing is written until someone confirms it. */
@@ -2382,7 +2389,8 @@ function tripBar(t, row, laneIdx, isOverlap, ctx) {
       note = " · no same-city chain reaches this — needs an empty run or an ad hoc bus";
     }
   } else if (row.kind === "adhoc") cls.push("adhoc");
-  else cls.push(t.status.toLowerCase());
+  // A unit row needs nothing further: the status class already on the bar is
+  // exactly what a committed trip has to say.
   /* After the state classes, not instead of them: a locked trip is still
      uncovered or still assigned, and hiding that behind the lock would make
      the board unable to say what locking actually cost. */

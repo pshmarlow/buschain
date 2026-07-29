@@ -38,14 +38,17 @@ def _rid(t: TripId) -> str:
 
 
 def _where(repo: Repo, t: TripId) -> str:
-    """A trip named the way the Data tab names it, for undo labels.
+    """A trip named the way the Data tab numbers it, for undo labels.
 
     Through the repo so an undo entry and the row on screen cannot disagree:
-    a manual row's own key is a rowid nobody recognises, and the label it gets
-    instead is derived (see Repo.row_labels). Falls back to the key rather than
-    failing — a label is never worth losing an action over.
+    a manual row's own key is a rowid nobody recognises, and the number it gets
+    instead is derived (see Repo.row_labels). The 'row' word is added here
+    rather than stored in the label, because the table shows the number alone
+    and only prose like 'edit Status on row 412' needs the noun. Falls back to
+    the key rather than failing — a label is never worth losing an action over.
     """
-    return repo.row_labels().get(_rid(t), f"{t.origin} {t.key}")
+    label = repo.row_labels().get(_rid(t))
+    return f"row {label}" if label else f"{t.origin} {t.key}"
 
 
 def _sid(t: TripId | None) -> str | None:
@@ -237,8 +240,21 @@ async def import_file(request: Request, file: UploadFile) -> dict[str, Any]:
             warnings = [f"Information sheet not read: {e}"]
         else:
             repo.sync_options(seed_result)
+            # The sheet owns the city registry too, when it heads a 'Cities'
+            # column. Outside the is_seeded() guard for the same reason the
+            # pick lists are: the column is the sheet's statement of the list,
+            # whether or not the company registry has been seeded from it.
+            # Its warnings join the fleet ones — a city kept back because live
+            # trips still use it is exactly as worth saying.
+            warnings = repo.sync_cities(seed_result)
             if repo.is_seeded():
-                warnings = repo.sync_fleets(seed_result)
+                warnings += repo.sync_fleets(seed_result)   # folds in seed warnings
+            else:
+                # sync_fleets is what normally reports the reader's own
+                # warnings, so before the first seed they would be dropped —
+                # and 'the Fleets column is empty' is at its most useful on
+                # exactly that import, when nothing is registered yet.
+                warnings += seed_result.warnings
     # Written for csv imports too (as empty): the stored warnings describe the
     # active dataset, and a csv import replaces it — keeping the previous
     # workbook's warnings on screen would describe rows that no longer exist.

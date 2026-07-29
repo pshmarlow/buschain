@@ -18,7 +18,7 @@ import openpyxl
 from openpyxl.utils.exceptions import InvalidFileException
 
 from .. import normalize
-from .types import ALL_COLUMNS, COLUMN_ORDER, ImportedDataset, RawTripRow, SHEET_NAME
+from .types import ALL_COLUMNS, COLUMN_ORDER, ImportedDataset, RawTripRow, SHEET_NAMES
 
 HEADER_ROW = 1
 # A row "has content" iff any contract-layout cell is non-empty. The legacy
@@ -37,9 +37,14 @@ def read(blob: bytes) -> ImportedDataset:
     # instead of the import error they are.
     except (zipfile.BadZipFile, KeyError, InvalidFileException) as e:
         raise ValueError(f"Not a readable .xlsx workbook ({e})") from e
-    if SHEET_NAME not in wb.sheetnames:
-        raise ValueError(f"Workbook has no sheet named {SHEET_NAME!r}")
-    ws = wb[SHEET_NAME]
+    sheet_name = next((n for n in SHEET_NAMES if n in wb.sheetnames), None)
+    if sheet_name is None:
+        names = " or ".join(repr(n) for n in SHEET_NAMES)
+        raise ValueError(
+            f"Workbook has no sheet named {names} (found: "
+            f"{', '.join(repr(n) for n in wb.sheetnames)})"
+        )
+    ws = wb[sheet_name]
 
     # The values below are read positionally, so row 1 must actually be the
     # contract layout. Without this check a workbook with one inserted column
@@ -52,7 +57,7 @@ def read(blob: bytes) -> ImportedDataset:
     expected = [normalize.casefold_key(t) for t in COLUMN_ORDER]
     if got != expected:
         raise ValueError(
-            f"Sheet {SHEET_NAME!r} row 1 is not the contract layout; expected "
+            f"Sheet {sheet_name!r} row 1 is not the contract layout; expected "
             f"{list(COLUMN_ORDER)}, got {[str(c or '') for c in header]}"
         )
 

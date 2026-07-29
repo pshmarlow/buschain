@@ -79,7 +79,7 @@ def test_shifted_header_is_rejected(workbook_bytes):
     splice assignments into the wrong column — both silent. The header row is
     the tripwire."""
     wb = openpyxl.load_workbook(io.BytesIO(workbook_bytes))
-    ws = wb[xlsx_reader.SHEET_NAME]
+    ws = wb[next(n for n in xlsx_reader.SHEET_NAMES if n in wb.sheetnames)]
     ws.insert_cols(1)
     buf = io.BytesIO()
     wb.save(buf)

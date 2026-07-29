@@ -10,12 +10,22 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Literal, Mapping
 
-# The one sheet every codec reads and writes. A single constant because the
-# name was previously spelled in four places (reader, writer, both csv paths)
-# — the same drift hazard the column letters below already solved.
-SHEET_NAME = "Capitals 2026"
+# The sheet every codec reads and writes. One list because the name was
+# previously spelled in four places (reader, writer, both csv paths) — the same
+# drift hazard the column letters below already solved.
+#
+# Several names because the workbook is re-cut every season and the tab is
+# renamed with it ('Capitals 2026' became 'CAPITALS'). The reader takes
+# whichever of these the workbook actually has and the writer patches that same
+# one, so a season rename is a one-line edit here rather than a failed import.
+# The layout check below is what actually guarantees we read the right sheet;
+# the name only has to find it.
+SHEET_NAMES: tuple[str, ...] = ("Capitals 2026", "CAPITALS")
+# The name a codec CREATES a sheet with (csv -> xlsx), where there is no
+# existing workbook to take it from.
+SHEET_NAME = SHEET_NAMES[0]
 
-# The interchange layout of sheet 'Capitals 2026', header row 1, in order.
+# The interchange layout of the trip sheet, header row 1, in order.
 # Everything else here derives from this list, so a layout change (the sheet
 # lost its formula-backed 'Y-N'/'B Comp' pair, shifting every later column two
 # letters left) is a one-line edit. Letters were previously repeated in five
@@ -112,6 +122,17 @@ INFO_FLEET_COL = "N"
 # when there is one, so inserting a column ahead of these does not repoint them.
 INFO_OPTION_COLS: Mapping[str, str] = {"Nationality": "O", "OP": "P"}
 assert set(INFO_OPTION_COLS) == set(OPTION_COLUMNS)
+
+# The city registry lives on the same sheet, in the same shape as the pick
+# lists above and located the same way (by header, falling back to this letter
+# when the column has to be created). Deliberately NOT in INFO_OPTION_COLS:
+# those are pick lists for passthrough columns of the TRIP sheet, which the
+# contract never validates against, whereas Departure/Arrival are resolved
+# against these codes — so editing this column changes which rows are operable,
+# and Repo.sync_cities has to be more careful than sync_options is.
+CITY_HEADER = "Cities"
+INFO_CITY_COL = "Q"
+assert CITY_HEADER not in INFO_OPTION_COLS
 
 
 @dataclass(frozen=True)

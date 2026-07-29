@@ -33,8 +33,14 @@ def make_repo(tmp_path, workbook_bytes, seed_result) -> Repo:
 
 def test_first_export_adds_the_pick_list_columns_and_nothing_else(
         tmp_path, workbook_bytes, seed_result):
-    """The one-time bootstrap: a workbook with no Nationality/OP columns gets
-    them, written only into O and P of the Information sheet."""
+    """The one-time bootstrap: a workbook with no Nationality/OP/Cities columns
+    gets them, written only into O, P and Q of the Information sheet.
+
+    Q joined O and P when the city registry started living on the sheet as
+    well. It is the same bootstrap, so it stays in the same test: the point
+    being defended is that the first export creates exactly these columns and
+    touches nothing else, not how many of them there happen to be.
+    """
     from buschain.codecs import xlsx_writer
     from buschain.codecs.seed import INFO_SHEET
     repo = make_repo(tmp_path, workbook_bytes, seed_result)
@@ -56,8 +62,9 @@ def test_first_export_adds_the_pick_list_columns_and_nothing_else(
             else None) != ws_b.cell(r, c).value
     ]
     assert diffs, "the lists have to land somewhere"
-    assert {d.rstrip("0123456789") for d in diffs} == {"O", "P"}
+    assert {d.rstrip("0123456789") for d in diffs} == {"O", "P", "Q"}
     assert ws_b["O1"].value == "Nationality" and ws_b["P1"].value == "OP"
+    assert ws_b["Q1"].value == "Cities"
     options = repo.options()
     assert [ws_b.cell(r, 15).value for r in range(2, 2 + len(options["Nationality"]))] \
         == sorted(options["Nationality"])

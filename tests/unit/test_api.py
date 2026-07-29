@@ -209,28 +209,32 @@ def test_paste_adds_rows_and_undoes_as_one(client):
     assert not any(t["id"] in ids for t in after["trips"])
 
 
-def test_manual_row_is_named_for_the_row_it_will_export_to(client):
+def test_manual_row_is_numbered_for_the_row_it_will_export_to(client):
     """The label is a promise about the exported file, so it is checked against
     the exported file. Its own key is a SQLite rowid that counts every row of
-    every dataset ever imported — 'new 13361' on the ninth import."""
+    every dataset ever imported — 13361 on the ninth import.
+
+    Bare number, no 'new' word: the Row column shows the number alone, and the
+    noun belongs only to prose like the undo label below.
+    """
     res = client.post("/api/trips", json={"values": {
         "A": "Pending", "E": "2026-09-01", "F": "2026-09-02",
         "G": "OSL", "H": "STO", "B": "99001",
     }})
     tid = res.json()["id"]
     label = client.get("/api/state").json()["labels"][tid]
-    assert label == "new 1672"
+    assert label == "1672"
     assert client.get("/api/state").json()["undo"]["label"] == "add trip"
 
     import openpyxl
     exported = client.get("/api/export.xlsx").content
     ws = openpyxl.load_workbook(io.BytesIO(exported), data_only=True)["Capitals 2026"]
-    assert ws.cell(row=int(label.split()[1]), column=2).value == 99001
+    assert ws.cell(row=int(label), column=2).value == 99001
 
     # Undo labels come from the same call, or an entry would name a row the
-    # table calls something else.
+    # table numbers differently.
     client.delete(f"/api/trips/{tid}")
-    assert client.get("/api/state").json()["undo"]["label"] == "delete new 1672"
+    assert client.get("/api/state").json()["undo"]["label"] == "delete row 1672"
 
 
 def test_paste_with_a_header_maps_columns_by_title(client):

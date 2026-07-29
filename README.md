@@ -169,23 +169,39 @@ Key decisions worth knowing before editing:
   imports, and failures land in the non-operable list. The whole paste is one
   undo entry, since a batch is one action and 40 of them would flush a
   50-deep stack.
-- **Manual rows are named for their export row.** The Data tab labels a
-  hand-added trip `new 1672` — the sheet row it will occupy on export (the
-  rule `_append_rows` follows), served from `Repo.row_labels` so the table and
-  the undo labels cannot disagree. The label is derived, not stored: deleting
-  a sheet row below the data renumbers it, which beats freezing a number the
+- **Manual rows are numbered for their export row.** The Data tab gives a
+  hand-added trip `1672` — the sheet row it will occupy on export (the rule
+  `_append_rows` follows), served from `Repo.row_labels` so the table and the
+  undo labels cannot disagree. The label is the bare number: it is the row's
+  identity, and only prose adds the noun (`api._where` writes "row 1672" for
+  an undo entry). Sheet and manual numbers cannot collide, since a manual row
+  always numbers above the last sheet row. Derived, not stored: deleting a
+  sheet row below the data renumbers it, which beats freezing a number the
   exported file then contradicts. Its internal id stays the SQLite rowid.
 - **The Data table's sort has three rules that are not the obvious ones.**
   Blanks sort last in *both* directions, because an empty cell is missing
   rather than least — so the direction is applied inside `compareText`, not by
-  negating it at the call site, which used to flip the blank branch too. The
-  *Row* column sorts on the number in its label rather than the label, so
-  `new 1672` follows `row 1671` instead of leading the table on `"new" <
-  "row"`; ascending on Row therefore reproduces the unsorted order, which is
-  the source file's own (`Repo._trip_rows`, `ORDER BY id`). And hiding the
-  sorted column clears the sort, as hiding a filtered column already cleared
-  its filter — otherwise `viewRows` finds no column, silently drops to source
-  order, and the sort comes back when you unhide.
+  negating it at the call site, which used to flip the blank branch too.
+  Ascending on *Row* reproduces the unsorted order, which is the source file's
+  own (`Repo._trip_rows`, `ORDER BY id`) — free now that the label is a bare
+  number, but it needed a separate sort key while the cells read `row 12` and
+  `new 1672`, which as text put every pasted row above row 2 on nothing but
+  `"new" < "row"`. And hiding the sorted column clears the sort, as hiding a
+  filtered column already cleared its filter — otherwise `viewRows` finds no
+  column, silently drops to source order, and the sort comes back on unhide.
+- **On the board, hue is the status and nothing else.** Green Confirmed,
+  yellow Pending, red Canceled, in every lane — set as `--bar-bg`/`--bar-fg`/
+  `--bar-line`/`--bar-stripe` by the status class that `tripBar` puts on every
+  bar unconditionally. Everything else a bar must say is said without hue:
+  provisional plans keep their diagonal hatch but cut it from the status
+  colour, an empty run tightens the hatch and dots the border, and the
+  uncovered lane's three-way split (actionable / opens up later / no chain
+  reaches it) runs solid-bold → dashed → dotted-and-faded. Lanes differ only
+  in gamma, written out per status rather than applied as a `filter()`, which
+  would also recolour `.selected`'s ring and `.overlap`'s outline. Before
+  this, the same Confirmed trip was green on a unit row, orange in the
+  uncovered lane and purple in ad hoc — the purple survives on the ad hoc
+  row band, where section identity belongs.
 - **A 370-day trip is a typo, and the contract refuses it.**
   `contract.MAX_TRIP_SPAN_DAYS = 60` is the one *judgment* in a module whose
   every other reason is objective, and it earns its place by measurement: the
@@ -207,17 +223,37 @@ Key decisions worth knowing before editing:
   banner this replaced triggered on the board's *total* extent exceeding 1100
   days, which the reference data's 576 never reached, so the warning written
   for exactly these rows had never once fired.
-- **The Information sheet owns the Nationality/OP pick lists**, in its own
-  columns O and P — the same arrangement as the `Fleets` column. Import
-  replaces the stored list from there; export writes the current list back,
-  creating the column and its header if the workbook predates them. So a
-  workbook's *first* export legitimately grows two columns and is the one
-  export that is not byte-identical; every one after it is, because the file
-  is then a fixed point (AT1 covers both halves). The lists are still only
-  dropdown sources — the contract never validates against them, so pruning a
-  typo can never knock a row out of the operable set. A column the sheet does
-  not head is left alone rather than read as empty, and only then does the
-  list bootstrap itself from values in the trip data.
+- **The Information sheet owns three list columns**: Nationality (O), OP (P)
+  and Cities (Q) — the same arrangement as the `Fleets` column, and all three
+  located by header rather than by letter so a column inserted to the left
+  cannot repoint the reader (or, worse, get the list written back over
+  someone else's data). Import replaces the stored list from there; export
+  writes the current list back, creating the column and its header if the
+  workbook predates it. So a workbook's *first* export legitimately grows
+  those columns and is the one export that is not byte-identical; every one
+  after it is, because the file is then a fixed point (AT1 covers both
+  halves). A column the sheet does not head is left alone rather than read as
+  empty — absent and empty must never collapse into one state, or a workbook
+  that says nothing would wipe the list.
+- **Cities are on that sheet but are not a pick list.** Nationality and OP are
+  dropdown sources the contract never validates against, so pruning a typo
+  there can never knock a row out of the operable set. `Departure`/`Arrival`
+  *are* resolved against the city registry, so `Repo.sync_cities` cannot
+  simply honour a deletion the way `sync_options` does: a code still used by
+  live trips is kept and reported, exactly as `sync_fleets` keeps a unit that
+  still carries trips. Deleting one for real stays a Registry-tab action,
+  where `remove_city` names the affected trips first. Cities live in
+  `registry_cities`, never in `registry_options`, and `CITY_HEADER` is
+  deliberately excluded from `INFO_OPTION_COLS` so the two paths cannot be
+  confused. `seed.DEFAULT_CITIES` is now only the fallback for a workbook
+  that heads no Cities column.
+- **The trip sheet is found by name from a list, then proved by its header.**
+  The tab is renamed every season (`Capitals 2026` → `CAPITALS`), so
+  `SHEET_NAMES` holds the accepted names and the reader takes whichever the
+  workbook has; the writer resolves the same way, so the export patches the
+  sheet the data came from. The name only has to *find* the sheet — the row-1
+  layout check is what guarantees it is the right one, and it is the tripwire
+  that stops a shifted column importing every value one slot off.
 - **Nothing is auto-assigned.** The engine plans and ranks; a human accepts,
   and acceptance writes the assignment.
 - **The board can assign outside the plan.** Every other accept control renders

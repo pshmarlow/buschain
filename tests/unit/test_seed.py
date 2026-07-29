@@ -101,3 +101,89 @@ def test_repeated_values_collapse():
     lists = sheet_option_lists(_grid(
         ["Nationality"], ["Swedish"], ["Swedish"], ["Norwegian"]))
     assert lists["Nationality"].values == ("Swedish", "Norwegian")
+
+
+# -- the Cities column ------------------------------------------------------
+
+def test_cities_fall_back_to_the_defaults_when_the_sheet_heads_no_column(seed_result):
+    """The reference workbook predates the column, so DEFAULT_CITIES still
+    applies and nothing about its import changes."""
+    from buschain.codecs.seed import DEFAULT_CITIES
+    assert seed_result.city_list is None
+    assert seed_result.cities == list(DEFAULT_CITIES)
+
+
+def test_cities_come_from_the_sheet_when_it_heads_the_column():
+    """A workbook that states its own list owns it — the defaults are only a
+    fallback for workbooks that predate the column."""
+    from buschain.codecs.seed import DEFAULT_CITIES, SeedResult, sheet_city_list
+    grid = _grid(["Cities"], ["OSL"], ["Turku"], ["OSL"], [None], ["TEST"])
+    lst = sheet_city_list(grid)
+    assert lst is not None
+    assert lst.column == "A"
+    assert lst.values == ("OSL", "Turku", "TEST")     # deduped, order kept
+    assert "Turku" not in DEFAULT_CITIES              # i.e. genuinely from the sheet
+    result = SeedResult(companies=[], cities=list(DEFAULT_CITIES), city_list=lst)
+    assert result.to_registry().cities["turku"] == "Turku"
+
+
+def test_city_column_follows_its_header_not_a_fixed_letter():
+    """Same rule as the pick lists: reading the fixed letter after someone
+    inserts a column would pick up other data and write the list back over it."""
+    from buschain.codecs.seed import sheet_city_list
+    lst = sheet_city_list(_grid(["Inserted", "Cities"], ["x", "OSL"]))
+    assert lst is not None and lst.column == "B" and lst.values == ("OSL",)
+
+
+def test_headed_but_empty_city_column_is_not_the_same_as_absent():
+    """An emptied column must be able to clear the list; a sheet that says
+    nothing must not. The two cannot be conflated — see sync_cities."""
+    from buschain.codecs.seed import sheet_city_list
+    empty = sheet_city_list(_grid(["Cities"], [None]))
+    assert empty is not None and empty.values == ()
+    assert sheet_city_list(_grid(["Something else"], ["x"])) is None
+
+
+def _info_workbook(rows):
+    """A minimal workbook carrying just an Information sheet, for read_seed.
+
+    Built here rather than committing a binary fixture: the cases below are
+    about one or two columns, and a real workbook would hide which cell the
+    test actually depends on.
+    """
+    import io
+    import openpyxl
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Information"
+    for row in rows:
+        ws.append(list(row))
+    buf = io.BytesIO()
+    wb.save(buf)
+    return buf.getvalue()
+
+
+def test_empty_fleets_column_warns_rather_than_registering_nothing_in_silence():
+    """A fresh season's workbook arrives with the column headed and blank.
+
+    Silent until this warning: a blank cell is a legitimate 0 for one company,
+    so no per-row warning fires, and the 'no Fleets column' warning needs the
+    header to be missing rather than the values. The symptom was every company
+    present, nothing chainable, and nothing on screen saying why.
+    """
+    from buschain.codecs.seed import read_seed
+    result = read_seed(_info_workbook([
+        ["Bus Companies", "Fleets"], ["Ollex", None], ["Kautra", None],
+    ]))
+    assert result.companies and not any(c.units for c in result.companies)
+    assert any("'Fleets' column is empty" in w for w in result.warnings)
+
+
+def test_a_populated_fleets_column_does_not_warn():
+    """The other side of the boundary — one real count is enough to mean the
+    column was filled in, so the warning must not fire on a partial list."""
+    from buschain.codecs.seed import read_seed
+    result = read_seed(_info_workbook([
+        ["Bus Companies", "Fleets"], ["Ollex", 2], ["Kautra", None],
+    ]))
+    assert not any("column is empty" in w for w in result.warnings)

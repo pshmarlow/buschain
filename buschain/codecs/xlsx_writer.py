@@ -21,7 +21,7 @@ from xml.sax.saxutils import escape
 
 from .types import (
     ALL_COLUMNS, CellWrite, END_DATE, ExportPlan, INFO_SHEET, InfoCellWrite,
-    InfoWrite, NewRow, PAX, PROJECT, SHEET_NAME, START_DATE,
+    InfoWrite, NewRow, PAX, PROJECT, SHEET_NAMES, START_DATE,
 )
 
 _CONTRACT_COLS = frozenset(ALL_COLUMNS)
@@ -59,7 +59,10 @@ def export(plan: ExportPlan) -> bytes:
             or plan.info_cell_writes or plan.deleted_rows):
         return plan.blob                      # AT1: byte-for-byte, trivially
 
-    sheet_path = _sheet_path(plan.blob, SHEET_NAME)
+    # Whichever name this workbook's trip sheet actually carries — the same
+    # resolution the reader did, so the export patches the sheet the data came
+    # from rather than a sibling that happens to be named first in the list.
+    sheet_path = _trip_sheet_path(plan.blob)
     # The Information sheet is only resolved when there is something to write
     # there, so a workbook without one still exports its trip data.
     info_path = (_sheet_path(plan.blob, INFO_SHEET)
@@ -84,6 +87,18 @@ def export(plan: ExportPlan) -> bytes:
 
 
 # -- workbook plumbing -------------------------------------------------------
+
+def _trip_sheet_path(blob: bytes) -> str:
+    """The worksheet part of whichever accepted trip-sheet name this workbook
+    uses. Names are tried in SHEET_NAMES order, matching the reader."""
+    for name in SHEET_NAMES:
+        try:
+            return _sheet_path(blob, name)
+        except XlsxPatchError:
+            continue
+    names = " or ".join(repr(n) for n in SHEET_NAMES)
+    raise XlsxPatchError(f"Workbook has no sheet named {names}")
+
 
 def _sheet_path(blob: bytes, sheet_name: str) -> str:
     """Resolve sheet name -> worksheet part path via workbook.xml + rels."""

@@ -373,49 +373,77 @@ td.cell input, td.cell select { width: 100%; min-width: 6rem; padding: 0.1rem 0.
   font-size: 0.7rem; white-space: nowrap; overflow: hidden;
   text-overflow: ellipsis; cursor: pointer;
 }
-.bar.confirmed { background: var(--ok-bg); color: var(--ok-fg); border-color: #b3d9c4; }
-.bar.pending { background: var(--risk-bg); color: var(--risk-fg); border-color: #ddc98d; border-style: dashed; }
-.bar.uncovered { background: var(--warn-bg); color: var(--warn-fg); border-color: #e3bd83; font-weight: 600; }
+/* HUE IS ALWAYS THE STATUS, in every section of the board: green Confirmed,
+   yellow Pending, red Canceled. Every other thing a bar has to say — is it a
+   proposal, is it reachable, is it ad hoc capacity — is said with texture,
+   border style, weight or opacity, never by changing the hue. That rule is
+   what lets you read status off any lane without a legend lookup; before it,
+   the uncovered lane was orange-by-actionability and the ad hoc lane purple,
+   so the same Confirmed trip was three different colours depending on which
+   row it happened to sit in.
+
+   Set as variables rather than as properties so a section can restate the
+   gamma (below) without restating which colour family it belongs to. */
+.bar.confirmed {
+  --bar-bg: var(--ok-bg); --bar-fg: var(--ok-fg); --bar-line: #8fc7a8;
+  --bar-stripe: rgba(20, 104, 60, 0.20);
+}
+.bar.pending {
+  --bar-bg: var(--risk-bg); --bar-fg: var(--risk-fg); --bar-line: #ddc98d;
+  --bar-stripe: rgba(122, 93, 0, 0.20);
+}
+.bar.canceled {
+  --bar-bg: var(--bad-bg); --bar-fg: var(--bad-fg); --bar-line: #e9a8a2;
+  --bar-stripe: rgba(159, 28, 20, 0.20);
+  opacity: 0.55; text-decoration: line-through;
+}
+.bar { background: var(--bar-bg); color: var(--bar-fg); border-color: var(--bar-line); }
+
+/* Per-section gamma: same three hues, turned up where the lane is work waiting
+   on you and down where it is capacity you already have. Written out per
+   status rather than applied as a filter() — a filter would also recolour
+   .selected's ring and .overlap's outline, which carry their own meanings. */
+.bar.uncovered.confirmed { --bar-bg: #d3ecdd; --bar-fg: #0d5730; --bar-line: #6fb894; }
+.bar.uncovered.pending   { --bar-bg: #fdefc4; --bar-fg: #664e00; --bar-line: #d4b95f; }
+.bar.uncovered.canceled  { --bar-bg: #fbdad6; --bar-fg: #8a180f; --bar-line: #dd8f88; }
+.bar.adhoc.confirmed { --bar-bg: #f0f8f3; --bar-fg: #2c7a51; --bar-line: #c2ddcd; }
+.bar.adhoc.pending   { --bar-bg: #fefbf0; --bar-fg: #8a7028; --bar-line: #e8dcb4; }
+.bar.adhoc.canceled  { --bar-bg: #fef4f3; --bar-fg: #ad4a43; --bar-line: #f0c6c2; }
+
+.bar.uncovered { font-weight: 600; }
 /* Uncovered splits three ways. A trip nothing can reach *yet* is still work
    waiting on a decision; a trip nothing can *ever* reach is not planning work
    at all — it needs a bus bought or subcontracted. Painting them identically
-   is what made this lane a wall of undifferentiated orange. */
-.bar.uncovered.later {
-  background: #fdf4e6; color: #96703c; border-color: #e8d3b0;
-  border-style: dashed; font-weight: normal;
-}
-.bar.uncovered.never {
-  background: #eff1f3; color: #6b7a8c; border-color: #d8dde3; font-weight: normal;
-}
+   made this lane a wall of one flat colour; the three now separate by border
+   and weight, which leaves the hue free to keep saying Confirmed or Pending.
+   Solid+bold reads as loudest and fades to dotted+faint, in the order of how
+   much you can actually do about the trip today. */
+.bar.uncovered.later { border-style: dashed; font-weight: normal; }
+.bar.uncovered.never { border-style: dotted; font-weight: normal; opacity: 0.62; }
 /* Planned = the engine's proposal, not an assignment. Diagonal hatching is the
    whole point: on a unit row (auto mode) a planned bar sits beside committed
    ones, and only the fill tells them apart. Solid fills read as real, so this
-   one must never be solid. */
+   one must never be solid. The stripes are cut from the status colour
+   (--bar-stripe), so the bar still says Confirmed or Pending while its texture
+   says provisional. */
 .bar.planned {
   background: repeating-linear-gradient(
-    45deg, rgba(31, 111, 235, 0.13), rgba(31, 111, 235, 0.13) 4px,
-    rgba(31, 111, 235, 0.03) 4px, rgba(31, 111, 235, 0.03) 8px);
-  color: #1c4d8f; border-color: var(--accent); border-style: dashed;
-  font-weight: 600;
+    45deg, var(--bar-stripe) 0 4px, var(--bar-bg) 4px 8px);
+  border-style: dashed; font-weight: 600;
 }
-/* A planned trip the bus has to be driven to empty first. Same hatching — it is
-   still a proposal — recoloured to the warn ramp, because the difference from a
-   plain planned bar is a real cost, not a different degree of certainty. */
+/* A planned trip the bus has to be driven to empty first — a real cost, not a
+   lesser degree of certainty. Tighter stripes and a dotted edge rather than a
+   different colour: the hue is spoken for by the status. */
 .bar.planned.reposition {
   background: repeating-linear-gradient(
-    45deg, rgba(138, 83, 0, 0.15), rgba(138, 83, 0, 0.15) 4px,
-    rgba(138, 83, 0, 0.03) 4px, rgba(138, 83, 0, 0.03) 8px);
-  color: var(--warn-fg); border-color: var(--warn-fg);
+    45deg, var(--bar-stripe) 0 2px, var(--bar-bg) 2px 5px);
+  border-style: dotted;
 }
-/* Solid, not hatched: an ad hoc assignment is committed work, and hatching is
-   reserved for the planner's own proposals (.bar.planned). Saturated enough to
-   stay apart from .bar.uncovered.never's grey at 10px-per-day, where a bar is
-   a few pixels wide and only the fill is left to read. */
-.bar.adhoc {
-  background: var(--adhoc-bg); color: var(--adhoc-fg);
-  border-color: var(--adhoc-line);
-}
-.bar.canceled { background: var(--bad-bg); color: var(--bad-fg); opacity: 0.5; text-decoration: line-through; }
+/* Ad hoc: a bus beyond the charter. Solid, not hatched — it is committed work,
+   and hatching is reserved for the planner's own proposals. The purple that
+   used to mark it lives on in the row band (.board-row.adhoc), which is where
+   section identity belongs; a bar inside that band is free to spend its fill
+   on the status instead. */
 .bar.overlap { outline: 2px solid var(--bad-fg); outline-offset: -2px; }
 /* Locked: held out of chaining. Marked, never recoloured — the fill still has
    to say whether the trip is covered, because that is what locking either
@@ -473,25 +501,33 @@ td.cell input, td.cell select { width: 100%; min-width: 6rem; padding: 0.1rem 0.
 }
 
 #board-legend { display: flex; gap: 0.7rem; flex-wrap: wrap; align-items: center; font-size: 0.75rem; color: var(--muted); }
+#board-legend .legend-head { font-weight: 600; color: var(--fg); }
 .swatch { display: inline-block; width: 11px; height: 11px; border-radius: 3px; margin-right: 4px; vertical-align: -1px; border: 1px solid transparent; }
-.sw-confirmed { background: var(--ok-bg); border-color: #b3d9c4; }
-.sw-pending { background: var(--risk-bg); border-color: #ddc98d; border-style: dashed; }
-.sw-uncovered { background: var(--warn-bg); border-color: #e3bd83; }
-.sw-later { background: #fdf4e6; border-color: #e8d3b0; border-style: dashed; }
-.sw-never { background: #eff1f3; border-color: #d8dde3; }
+/* The legend is in two halves because the board is: the first three swatches
+   are the only ones that carry a hue, and every swatch after them is drawn in
+   a neutral grey to show a TEXTURE. Colouring those would re-teach exactly the
+   thing the board no longer does — that state and status share the fill. */
+.sw-confirmed { background: var(--ok-bg); border-color: #8fc7a8; }
+.sw-pending { background: var(--risk-bg); border-color: #ddc98d; }
+.sw-canceled { background: var(--bad-bg); border-color: #e9a8a2; }
+.swatch.sw-texture { background: #eef1f4; border-color: #9aa7b5; }
+.sw-actionable { border-width: 2px; }
+.sw-later { border-style: dashed; }
+.sw-never { border-style: dotted; opacity: 0.62; }
 .sw-planned {
   background: repeating-linear-gradient(
-    45deg, rgba(31, 111, 235, 0.2), rgba(31, 111, 235, 0.2) 3px,
-    rgba(31, 111, 235, 0.03) 3px, rgba(31, 111, 235, 0.03) 6px);
-  border-color: var(--accent); border-style: dashed;
+    45deg, rgba(70, 85, 100, 0.28) 0 3px, #eef1f4 3px 6px);
+  border-color: #9aa7b5; border-style: dashed;
 }
 .sw-reposition {
   background: repeating-linear-gradient(
-    45deg, rgba(138, 83, 0, 0.22), rgba(138, 83, 0, 0.22) 3px,
-    rgba(138, 83, 0, 0.03) 3px, rgba(138, 83, 0, 0.03) 6px);
-  border-color: var(--warn-fg); border-style: dashed;
+    45deg, rgba(70, 85, 100, 0.28) 0 2px, #eef1f4 2px 4px);
+  border-color: #9aa7b5; border-style: dotted;
 }
 .sw-adhoc { background: var(--adhoc-bg); border-color: var(--adhoc-line); }
+#board-legend .legend-sep {
+  border-left: 1px solid var(--line); padding-left: 0.7rem; margin-left: -0.2rem;
+}
 .sw-ghost { background: rgba(31, 111, 235, 0.09); border-color: var(--accent); border-style: dashed; }
 .sw-link { background: none; border: none; border-top: 2px solid var(--accent); height: 2px; border-radius: 0; }
 .sw-er-link {
