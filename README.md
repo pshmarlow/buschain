@@ -254,6 +254,25 @@ Key decisions worth knowing before editing:
   sheet the data came from. The name only has to *find* the sheet — the row-1
   layout check is what guarantees it is the right one, and it is the tripwire
   that stops a shifted column importing every value one slot off.
+- **Renaming a company rewrites the data, not just the registry.** A trip
+  carries its company as *text* (`Ollex 1` in Company name, `NO Ollex` in Bus
+  Preference) and the contract resolves that text, so moving only the
+  canonical key would stop those cells resolving and drop every one of the
+  rows out of the operable set — silently, which is exactly what
+  `delete_company` refuses to allow. `Repo.rename_company` therefore rewrites
+  the cells as overrides in the same transaction; on the reference data
+  renaming Ollex touches 216 of them and the operable count does not move.
+  Three consequences worth knowing. Cells the app had never touched acquire
+  an override, so an export after a rename is no longer byte-identical to the
+  file that was imported — correctly, and re-importing that export is what
+  keeps the rename stable. `_snapshot` carries the registry's naming
+  alongside the cells, because an undo that restored one without the other
+  would leave every row resolving against nothing. And
+  `registry_companies.former_keys` records the old key so the Information
+  sheet's `Bus Companies` cell — matched *by name* to decide where a fleet
+  count is written back — is rewritten too, rather than the company quietly
+  dropping out of that round-trip. Renaming onto an existing company is
+  refused: that is a merge, and their units and trips differ.
 - **Nothing is auto-assigned.** The engine plans and ranks; a human accepts,
   and acceptance writes the assignment.
 - **The board can assign outside the plan.** Every other accept control renders

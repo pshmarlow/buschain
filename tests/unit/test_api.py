@@ -968,3 +968,59 @@ def test_rechain_never_touches_a_source_file_assignment(client):
     after = {t["id"]: t["assignment"] for t in client.get("/api/state").json()["trips"]}
     for tid in from_sheet:
         assert after[tid] is not None
+
+
+def test_rename_company_propagates_and_undoes(client):
+    """The route's whole contract in one pass: the registry moves, every cell
+    naming the company moves with it, nothing leaves the operable set, and one
+    undo step reverses both halves."""
+    before = client.get("/api/state").json()
+    operable = len(before["trips"])
+    named = [t for t in before["trips"]
+             if (t["values"].get("Company name") or "").casefold().startswith("ollex")]
+    assert named, "reference data should assign Ollex somewhere"
+
+    res = client.post("/api/registry/companies/ollex/rename", json={"name": "Ollez"})
+    assert res.status_code == 200 and res.json()["cells"] >= len(named)
+
+    after = client.get("/api/state").json()
+    assert len(after["trips"]) == operable          # nothing fell out
+    assert not any((t["values"].get("Company name") or "").casefold().startswith("ollex")
+                   for t in after["trips"])
+    keys = {c["key"] for c in after["registry"]["companies"]}
+    assert "ollez" in keys and "ollex" not in keys
+    assert after["undo"]["label"] == "rename ollex to Ollez"
+
+    client.post("/api/undo")
+    back = client.get("/api/state").json()
+    assert len(back["trips"]) == operable
+    assert {c["key"] for c in back["registry"]["companies"]} >= {"ollex"}
+    assert [t["values"].get("Company name") for t in back["trips"]] == \
+           [t["values"].get("Company name") for t in before["trips"]]
+
+
+def test_rename_onto_an_existing_company_is_a_conflict(client):
+    res = client.post("/api/registry/companies/ollex/rename", json={"name": "Vilneda"})
+    assert res.status_code == 409
+    assert "already a registered company" in res.json()["detail"]
+
+
+def test_rename_reaches_the_information_sheet_and_the_export(client):
+    """The renamed company keeps its row in Bus Companies — which is matched by
+    NAME to decide where a fleet count is written back, so leaving it stale
+    would quietly drop the company out of that round-trip."""
+    import io
+    import openpyxl
+    from buschain.codecs.seed import INFO_SHEET
+    client.post("/api/registry/companies/ollex/rename", json={"name": "Ollez"})
+    assert client.get("/api/state").json()["unwritable_companies"] == []
+
+    exported = client.get("/api/export.xlsx").content
+    ws = openpyxl.load_workbook(io.BytesIO(exported), data_only=True)[INFO_SHEET]
+    names = [ws.cell(r, 13).value for r in range(2, ws.max_row + 1)]
+    assert "Ollez" in names and "Ollex" not in names
+
+    trips = openpyxl.load_workbook(io.BytesIO(exported), data_only=True)["Capitals 2026"]
+    company_cells = [trips.cell(r, 14).value for r in range(2, 400)]
+    assert any((c or "").startswith("Ollez") for c in company_cells)
+    assert not any((c or "").startswith("Ollex") for c in company_cells)

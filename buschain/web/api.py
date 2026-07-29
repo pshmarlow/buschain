@@ -750,6 +750,30 @@ def upsert_company(request: Request, body: CompanyBody) -> dict[str, Any]:
     return {"ok": True}
 
 
+class RenameBody(BaseModel):
+    name: str
+
+
+@router.post("/registry/companies/{key}/rename")
+def rename_company(request: Request, key: str, body: RenameBody) -> dict[str, Any]:
+    """Rename a company and carry the new name through the working set.
+
+    Undoable, and it has to be: this rewrites every Company name and Bus
+    Preference cell that named the company — hundreds of them on real data —
+    and the undo snapshot covers the registry alongside the cells, so stepping
+    back cannot leave the two disagreeing (Repo._snapshot).
+    """
+    repo = _repo(request)
+    try:
+        with repo.undoable(f"rename {key} to {body.name}"):
+            cells = repo.rename_company(key, body.name)
+    except RepoError as e:
+        # 409 like delete_company's refusals: both are conflicts with state
+        # (unknown company, or a name already taken), not malformed input.
+        raise HTTPException(409, str(e)) from e
+    return {"ok": True, "cells": cells}
+
+
 @router.delete("/registry/companies/{key}")
 def delete_company(request: Request, key: str) -> dict[str, Any]:
     try:

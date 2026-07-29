@@ -626,3 +626,115 @@ def test_sync_cities_does_nothing_when_the_sheet_heads_no_column(repo):
     before = dict(repo.registry().cities)
     assert repo.sync_cities(SeedResult(companies=[], cities=[])) == []
     assert repo.registry().cities == before
+
+
+# -- renaming a company -----------------------------------------------------
+
+def test_rename_carries_the_new_name_into_every_trip_cell(repo):
+    """The point of the whole feature: the registry key is not where a trip's
+    company lives — the cell text is, and the contract resolves that text."""
+    seeded(repo)
+    import_rows(repo,
+                RawTripRow(2, trip_values(company="Ollex 1")),
+                RawTripRow(3, trip_values(company="Ollex")),
+                RawTripRow(4, trip_values(company="Ollex  2")),   # stray space
+                RawTripRow(5, trip_values(company="Vilneda")))
+    assert repo.rename_company("ollex", "Ollez") == 3
+
+    report, registry, _ = repo.load_state()
+    names = [t.display.get("Company name") for t in report.trips]
+    assert names == ["Ollez 1", "Ollez", "Ollez 2", "Vilneda"]
+    assert "ollez" in registry.companies and "ollex" not in registry.companies
+    assert registry.companies["ollez"].name == "Ollez"
+    # Units hang off the company row id, which a rename leaves alone.
+    assert registry.companies["ollez"].units == frozenset({1, 2})
+
+
+def test_rename_leaves_no_row_non_operable(repo):
+    """The failure this exists to prevent. Changing only the key would leave
+    'Ollex 1' resolving against nothing, and the rows would leave the operable
+    set without anything being said."""
+    seeded(repo)
+    import_rows(repo, *[RawTripRow(r, trip_values(company="Ollex 1"))
+                        for r in range(2, 8)])
+    before = len(repo.load_state()[0].trips)
+    repo.rename_company("ollex", "Ollez")
+    report, _, _ = repo.load_state()
+    assert len(report.trips) == before and not report.non_operable
+
+
+def test_rename_rewrites_bus_preference_and_keeps_its_negation(repo):
+    """Bus Preference names a company too, and 'NO Ollex' has to stay a
+    prohibition. The prefix is carried across verbatim rather than rebuilt, so
+    a lowercase 'no ' is not quietly upper-cased."""
+    seeded(repo)
+    import_rows(repo,
+                RawTripRow(2, trip_values(pref="Ollex")),
+                RawTripRow(3, trip_values(pref="NO Ollex")),
+                RawTripRow(4, trip_values(pref="no Ollex")))
+    repo.rename_company("ollex", "Ollez")
+    report, _, _ = repo.load_state()
+    prefs = [t.display.get("Bus Preference") for t in report.trips]
+    assert prefs == ["Ollez", "NO Ollez", "no Ollez"]
+    assert [t.yn for t in report.trips] == ["Y", "N", "N"]
+
+
+def test_rename_rewrites_an_assignment_the_app_itself_wrote(repo):
+    """An accepted assignment is an override, not sheet text — it has to move
+    with the rename like everything else."""
+    seeded(repo)
+    ids = import_rows(repo, RawTripRow(2, trip_values()))
+    trip = repo.load_state()[0].trips[0].id
+    repo.accept(trip, "ollex", 1, None)
+    assert repo.load_state()[0].trips[0].display["Company name"] == "Ollex 1"
+    repo.rename_company("ollex", "Ollez")
+    t = repo.load_state()[0].trips[0]
+    assert t.display["Company name"] == "Ollez 1"
+    assert t.assignment is not None and t.assignment.company == "ollez"
+    assert ids
+
+
+def test_rename_onto_an_existing_company_is_refused(repo):
+    """It would mean merging two companies with different units and trips."""
+    seeded(repo)
+    with pytest.raises(RepoError, match="already a registered company"):
+        repo.rename_company("ollex", "Vilneda")
+    assert "ollex" in repo.registry().companies
+
+
+def test_rename_of_an_unknown_company_is_refused(repo):
+    seeded(repo)
+    with pytest.raises(RepoError, match="Unknown company"):
+        repo.rename_company("nobody", "Someone")
+
+
+def test_rename_to_the_same_name_changes_nothing(repo):
+    seeded(repo)
+    import_rows(repo, RawTripRow(2, trip_values(company="Ollex 1")))
+    assert repo.rename_company("ollex", "Ollex") == 0
+
+
+def test_rename_can_change_only_the_casing(repo):
+    """The key does not move, so nothing has to be re-resolved — but the cells
+    still get the new spelling, which is the whole point of asking for it."""
+    seeded(repo)
+    import_rows(repo, RawTripRow(2, trip_values(company="Ollex 1")))
+    assert repo.rename_company("ollex", "OLLEX") == 1
+    report, registry, _ = repo.load_state()
+    assert report.trips[0].display["Company name"] == "OLLEX 1"
+    assert registry.companies["ollex"].name == "OLLEX"
+
+
+def test_undo_puts_back_the_registry_and_the_cells_together(repo):
+    """Either both move or the dataset is broken: cells restored to 'Ollex 1'
+    against a registry still saying Ollez would resolve against nothing."""
+    seeded(repo)
+    import_rows(repo, RawTripRow(2, trip_values(company="Ollex 1")))
+    with repo.undoable("rename"):
+        repo.rename_company("ollex", "Ollez")
+    assert repo.load_state()[0].trips[0].display["Company name"] == "Ollez 1"
+    repo.undo()
+    report, registry, _ = repo.load_state()
+    assert report.trips[0].display["Company name"] == "Ollex 1"
+    assert "ollex" in registry.companies and "ollez" not in registry.companies
+    assert not report.non_operable

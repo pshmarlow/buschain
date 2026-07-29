@@ -23,8 +23,9 @@ from ..codecs import seed
 from ..codecs.seed import SeedResult
 from ..codecs.types import (
     ALL_COLUMNS, CellWrite, COLUMN_LETTERS, COLUMN_TITLES, COMPANY_NAME,
-    CITY_HEADER, ExportPlan, ImportedDataset, INFO_CITY_COL, INFO_OPTION_COLS,
-    InfoCellWrite, InfoWrite, NewRow, OPTION_COLUMNS, RawTripRow, STATUS,
+    BUS_PREFERENCE, CITY_HEADER, ExportPlan, ImportedDataset, INFO_CITY_COL,
+    INFO_OPTION_COLS, InfoCellWrite, InfoWrite, NewRow, OPTION_COLUMNS,
+    RawTripRow, STATUS,
 )
 from ..model import (
     AcceptedLink, Company, ContractReport, Registry, Status, Trip, TripId,
@@ -77,6 +78,7 @@ class RepoError(ValueError):
 # Overrides key on titles; these two carry behavior beyond a plain edit.
 _STATUS_TITLE = COLUMN_TITLES[STATUS]
 _COMPANY_TITLE = COLUMN_TITLES[COMPANY_NAME]
+_PREFERENCE_TITLE = COLUMN_TITLES[BUS_PREFERENCE]
 
 
 class Repo:
@@ -226,6 +228,106 @@ class Repo:
                              note = excluded.note""",
             (key, normalize.collapse_ws(normalize.trim(display_name)), note),
         )
+
+    def rename_company(self, key: str, new_name: str) -> int:
+        """Rename a company and carry the new name through the working set.
+
+        Returns the number of trip cells rewritten.
+
+        The registry alone is not enough. Trip rows carry the company as
+        TEXT — 'Ollex 1' in Company name, 'NO Ollex' in Bus Preference — and
+        the contract resolves that text against the registry, so changing only
+        the key would stop 'Ollex 1' resolving and drop every one of those
+        rows out of the operable set. Silently, which is precisely what
+        delete_company refuses to allow. So the rename rewrites the cells too,
+        as overrides, in the same transaction: the two are one action or the
+        dataset is broken between them.
+
+        Consequence worth knowing before calling: cells the app had never
+        touched acquire an override, so the export now splices them. That is
+        the intended reading — the company really is called something else and
+        the sheet should say so — but it means an export after a rename is no
+        longer byte-identical to the file that was imported, and re-importing
+        that export is what keeps the rename stable.
+
+        Unit numbers and the 'NO ' prefix survive: the text is rebuilt from
+        what resolve_company found, so 'Ollex  2' (with the stray space the
+        reference data has) comes back as 'Ollez 2', normalized on the way.
+        """
+        new_name = normalize.collapse_ws(normalize.trim(new_name))
+        new_key = normalize.casefold_key(new_name)
+        if not new_key:
+            raise RepoError("Company name must not be empty")
+        with self._write_lock:
+            row = self.conn.execute(
+                "SELECT id, canonical_key, display_name, former_keys"
+                " FROM registry_companies WHERE canonical_key = ?", (key,)
+            ).fetchone()
+            if row is None:
+                raise RepoError(f"Unknown company {key!r}")
+            if new_key != key and self.conn.execute(
+                "SELECT 1 FROM registry_companies WHERE canonical_key = ?", (new_key,)
+            ).fetchone() is not None:
+                raise RepoError(
+                    f"{new_name!r} is already a registered company. Renaming onto it "
+                    "would merge two companies, which this cannot do — their units "
+                    "and their trips are different."
+                )
+            if new_name == row["display_name"]:
+                return 0                      # nothing to say, nothing to churn
+            registry = self.registry()
+            edits = self._rename_edits(key, new_name, registry)
+            former = json.loads(row["former_keys"])
+            if new_key != key:
+                former.append(key)
+            with self.conn:
+                for trip_db_id, title, value in edits:
+                    self._write_override(trip_db_id, title, value)
+                self.conn.execute(
+                    "UPDATE registry_companies SET canonical_key = ?, display_name = ?,"
+                    " former_keys = ? WHERE id = ?",
+                    (new_key, new_name, json.dumps(former), row["id"]),
+                )
+        return len(edits)
+
+    def _rename_edits(self, key: str, new_name: str,
+                      registry: Registry) -> list[tuple[int, str, str]]:
+        """(trip row id, column title, new text) for every cell naming `key`.
+
+        Reads the EFFECTIVE value — raw overlaid with any existing edit — so a
+        cell the app already wrote is rewritten from what it currently says,
+        not from what the sheet originally did.
+        """
+        dataset_id = self.active_dataset_id()
+        if dataset_id is None:
+            return []
+        edits: list[tuple[int, str, str]] = []
+        overrides = self._overrides_by_trip(dataset_id)
+        for row in self._trip_rows(dataset_id):
+            values = self._raw_with_overlays(row, overrides.get(row["id"], {}))
+
+            company = str(values.get(COMPANY_NAME) or "")
+            resolved = registry.resolve_company(company) if company.strip() else None
+            if resolved is not None and resolved[0] == key:
+                unit = resolved[1]
+                text = new_name if unit is None else f"{new_name} {unit}"
+                if text != company:
+                    edits.append((row["id"], _COMPANY_TITLE, text))
+
+            # Bus Preference names a company and never a unit (a numbered unit
+            # does not satisfy a company-level constraint), optionally behind
+            # 'NO '. The prefix is carried across verbatim rather than
+            # rebuilt, so 'no Ollex' does not silently become 'NO Ollez'.
+            pref = str(values.get(BUS_PREFERENCE) or "")
+            if pref.strip():
+                negated = pref[:3].casefold() == "no "
+                body = pref[3:].strip() if negated else pref
+                got = registry.resolve_company(body)
+                if got is not None and got[0] == key and got[1] is None:
+                    text = (pref[:3] if negated else "") + new_name
+                    if text != pref:
+                        edits.append((row["id"], _PREFERENCE_TITLE, text))
+        return edits
 
     def _company_id(self, key: str) -> int:
         row = self.conn.execute(
@@ -1213,6 +1315,22 @@ class Repo:
                     "SELECT id FROM trips WHERE dataset_id = ? AND origin = 'manual'",
                     (dataset_id,))
             ],
+            # What each company was CALLED, keyed by its row id, which a
+            # rename leaves alone. Only renaming is undoable, so this is
+            # deliberately just the naming — not which companies exist, and
+            # not their units, which hang off the same untouched id.
+            #
+            # It has to be here rather than left out: rename_company rewrites
+            # every trip cell naming the company, so an undo that put the old
+            # text back while the registry still held the new name would leave
+            # every one of those rows resolving against nothing.
+            "companies": [
+                [r["id"], r["canonical_key"], r["display_name"], r["note"],
+                 r["former_keys"]]
+                for r in self.conn.execute(
+                    "SELECT id, canonical_key, display_name, note, former_keys"
+                    " FROM registry_companies ORDER BY id")
+            ],
         })
 
     def _restore(self, dataset_id: int, snap: dict) -> None:
@@ -1262,6 +1380,16 @@ class Repo:
             "INSERT INTO accepted_links (dataset_id, supply_trip_id, demand_trip_id)"
             " VALUES (?, ?, ?)",
             [(dataset_id, s, d) for s, d in snap["links"]],
+        )
+        # Updated by id, never deleted and reinserted: the id is what the
+        # units hang off, and a company created since the snapshot is simply
+        # absent here and left alone (creating one is not undoable). .get for
+        # the same reason as locks — entries written before renaming existed.
+        self.conn.executemany(
+            "UPDATE registry_companies SET canonical_key = ?, display_name = ?,"
+            " note = ?, former_keys = ? WHERE id = ?",
+            [(key, name, note, former, cid)
+             for cid, key, name, note, former in snap.get("companies", ())],
         )
 
     @contextmanager
@@ -1351,7 +1479,7 @@ class Repo:
         return ExportPlan(
             blob=blob, cell_writes=tuple(writes), new_rows=tuple(new_rows),
             info_writes=self._info_writes(grid),
-            info_cell_writes=self._info_option_writes(grid),
+            info_cell_writes=self._info_option_writes(grid) + self._info_company_writes(grid),
             deleted_rows=self._deleted_sheet_rows(dataset_id),
         )
 
@@ -1417,16 +1545,62 @@ class Repo:
         if grid is None:
             return ()
         companies = self.registry().companies
+        renamed = self._former_keys()
         # The column is discovered from the sheet, like the reader discovers
         # it — see seed.fleet_column.
         column = seed.fleet_column(grid)
-        writes = [
-            InfoWrite(sheet_row=row, value=len(companies[key].units), column=column)
-            for row, name, current in seed.sheet_fleets(grid)
-            if (key := normalize.casefold_key(name)) in companies
-            and current != len(companies[key].units)
-        ]
+        writes = []
+        for row, name, current in seed.sheet_fleets(grid):
+            # A renamed company's row still holds the OLD name, so a plain
+            # lookup misses it and its fleet count silently stops round-
+            # tripping. Resolved through the rename record instead, in the
+            # same export that rewrites the name (_info_company_writes).
+            key = renamed.get(normalize.casefold_key(name),
+                              normalize.casefold_key(name))
+            if key in companies and current != len(companies[key].units):
+                writes.append(InfoWrite(sheet_row=row,
+                                        value=len(companies[key].units), column=column))
         return tuple(writes)
+
+    def _former_keys(self) -> dict[str, str]:
+        """Every canonical key a company used to have -> the key it has now."""
+        out: dict[str, str] = {}
+        for r in self.conn.execute(
+                "SELECT canonical_key, former_keys FROM registry_companies"):
+            for old in json.loads(r["former_keys"]):
+                out[old] = r["canonical_key"]
+        return out
+
+    def _info_company_writes(
+            self, grid: list[list[object]] | None) -> tuple[InfoCellWrite, ...]:
+        """A renamed company's name, back into the 'Bus Companies' cell it was
+        read from.
+
+        Without this the sheet keeps calling it what it was, and since that
+        column is matched BY NAME to decide which row a fleet count belongs
+        in, the company quietly drops out of the fleet round-trip and shows up
+        in unwritable_companies instead. Only the cell is rewritten — never a
+        new row — so a company that has no row there still cannot acquire one.
+        """
+        if grid is None:
+            return ()
+        renamed = self._former_keys()
+        if not renamed:
+            return ()                         # the common case: nothing to scan
+        column = seed.company_column(grid)
+        if column is None:
+            return ()
+        names = {
+            r["canonical_key"]: r["display_name"]
+            for r in self.conn.execute(
+                "SELECT canonical_key, display_name FROM registry_companies")
+        }
+        out = []
+        for row, name in seed.company_rows(grid):
+            key = renamed.get(normalize.casefold_key(name))
+            if key is not None and names.get(key, name) != name:
+                out.append(InfoCellWrite(row, column, names[key]))
+        return tuple(out)
 
     def _info_option_writes(
             self, grid: list[list[object]] | None) -> tuple[InfoCellWrite, ...]:
@@ -1466,7 +1640,14 @@ class Repo:
         grid = self._info_grid_for_dataset()
         if grid is None:
             return []
-        in_sheet = {normalize.casefold_key(n) for _, n in seed.company_rows(grid)}
+        renamed = self._former_keys()
+        # A renamed company's row still carries its old name; it IS writable
+        # (the export rewrites that cell, see _info_company_writes), so
+        # resolving through the rename record keeps it out of this warning.
+        in_sheet = {
+            renamed.get(key, key) for key in
+            (normalize.casefold_key(n) for _, n in seed.company_rows(grid))
+        }
         return sorted(
             c.name for key, c in self.registry().companies.items()
             if key not in in_sheet and c.units

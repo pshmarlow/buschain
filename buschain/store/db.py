@@ -16,7 +16,15 @@ CREATE TABLE IF NOT EXISTS registry_companies (
     id INTEGER PRIMARY KEY,
     canonical_key TEXT NOT NULL UNIQUE,
     display_name TEXT NOT NULL,
-    note TEXT
+    note TEXT,
+    -- JSON list of canonical keys this company used to have, oldest first.
+    -- A rename rewrites every trip cell naming the old company, so nothing in
+    -- the working set needs these — the Information sheet does. Its 'Bus
+    -- Companies' column still holds the old name, and that column is matched
+    -- by name to decide which row a fleet count is written back into, so
+    -- without a record of the rename the renamed company silently stops
+    -- round-tripping its fleet.
+    former_keys TEXT NOT NULL DEFAULT '[]'
 );
 CREATE TABLE IF NOT EXISTS registry_units (
     company_id INTEGER NOT NULL REFERENCES registry_companies(id) ON DELETE CASCADE,
@@ -131,7 +139,20 @@ def connect(path: str | Path) -> sqlite3.Connection:
     conn.executescript(SCHEMA)
     _drop_fleet_size(conn)
     _add_trip_deleted(conn)
+    _add_company_former_keys(conn)
     return conn
+
+
+def _add_company_former_keys(conn: sqlite3.Connection) -> None:
+    """Add registry_companies.former_keys to databases created before company
+    renaming existed — same reason as _add_trip_deleted."""
+    cols = {r["name"] for r in conn.execute("PRAGMA table_info(registry_companies)")}
+    if "former_keys" not in cols:
+        conn.execute(
+            "ALTER TABLE registry_companies ADD COLUMN "
+            "former_keys TEXT NOT NULL DEFAULT '[]'"
+        )
+        conn.commit()
 
 
 def _add_trip_deleted(conn: sqlite3.Connection) -> None:

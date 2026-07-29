@@ -3320,6 +3320,30 @@ function chipList(values, onAdd, onRemove, placeholder) {
   return box;
 }
 
+/* A rename is not a registry-only edit and the confirmation says so: trip rows
+   carry the company as text ('Ollex 1'), so the new name is written into every
+   one of those cells too — otherwise they would stop resolving and drop out of
+   the operable set. That also means the next export carries the new name into
+   cells the app had never touched, which is worth stating before the click
+   rather than discovering in a diff. One undo step covers all of it. */
+async function renameCompany(c) {
+  const name = prompt(
+    `Rename ${c.name} to:\n\n`
+    + "Every trip naming it — Company name and Bus Preference alike — is "
+    + "rewritten to match, so nothing stops resolving. The exported sheet will "
+    + "carry the new name too. Undo reverses the whole thing in one step.",
+    c.name);
+  if (name === null) return;
+  if (!name.trim() || name.trim() === c.name) return;
+  try {
+    const res = await post(`/registry/companies/${encodeURIComponent(c.key)}/rename`,
+                           { name });
+    await refresh();
+    toast(`Renamed ${c.name} to ${name.trim()}`
+      + (res.cells ? ` — ${plural(res.cells, "cell")} updated` : ""));
+  } catch (err) { toast(err.message, true); }
+}
+
 function renderRegistry() {
   $("#seed-btn").disabled = S.seeded;
   $("#seed-note").textContent = S.seeded
@@ -3358,7 +3382,10 @@ function renderRegistry() {
         catch (err) { toast(err.message, true); }
       }}, "+ unit"));
     table.append(el("tr", {},
-      el("td", {}, c.name),
+      el("td", {}, c.name, " ", el("button", {
+        class: "btn small", title: `Rename ${c.name}`,
+        onclick: () => renameCompany(c),
+      }, "Rename")),
       el("td", {}, c.fleet_size ?? ""),
       el("td", {}, unitChips),
       el("td", {}, noteInput(c)),

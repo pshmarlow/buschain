@@ -181,6 +181,15 @@ def company_rows(grid: list[list[object]]) -> list[tuple[int, str]]:
     return out
 
 
+def company_column(grid: list[list[object]]) -> str | None:
+    """The letter the company NAMES sit in, or None if the sheet heads no such
+    column. Unlike fleet_column there is no default to fall back on: a name
+    can only be rewritten in the cell it was read from, and inventing a column
+    for it would put a company where nothing reads one."""
+    col = _header_index(grid, COMPANY_HEADER)
+    return None if col is None else get_column_letter(col + 1)
+
+
 def fleet_column(grid: list[list[object]]) -> str:
     """The letter fleet counts should be WRITTEN to — discovered by header,
     like the reader locates it, so an inserted column cannot make the exporter

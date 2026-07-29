@@ -960,6 +960,15 @@
 <h3>9.2 Companies and units</h3>
 <ul>
   <li><strong>Add / update</strong> creates a company or updates its note.</li>
+  <li><strong>Rename</strong> changes a company's name everywhere at once —
+      use it when a company actually changes its name, not to fix which
+      company a trip is on. Every trip naming it is rewritten, so
+      <code>Ollex 1</code> becomes <code>Ollez 1</code> in the Data table, on
+      the board, in Suggestions and in the Worklist, and a
+      <code>NO Ollex</code> preference becomes <code>NO Ollez</code>. Units and
+      the note are kept. Nothing stops resolving and no row becomes
+      non-operable, which is the reason the rename touches the trips at all
+      rather than the registry alone. One <em>Undo</em> reverses all of it.</li>
   <li><strong>+ unit</strong> adds a numbered bus; the <code>×</code> on a chip
       removes one.</li>
   <li><strong>Fleet</strong> is not editable, because it is simply the number of
@@ -972,6 +981,15 @@
 <p class="manual-note">
   A company with no row in the Information sheet's Bus Companies column gets a
   warning: its fleet count cannot be written back on export.
+</p>
+<p class="manual-note">
+  Two things to expect after a rename. The <strong>exported workbook carries
+  the new name</strong>, including in rows the app had never touched before, so
+  that export is no longer byte-identical to the file you imported — that is
+  the rename doing its job, and re-importing that export is what keeps
+  everything agreeing. And free text is left alone: a <em>note</em> that
+  happens to mention the old name still says it, because rewriting prose is
+  guesswork the app does not do. Edit those by hand if they matter.
 </p>
 
 <h3>9.3 Cities</h3>
