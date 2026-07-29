@@ -33,13 +33,27 @@ py -3 -m venv .venv
 Then open http://127.0.0.1:8000. If you already have the repo cloned there,
 `git pull` first — Windows support landed after the initial import.
 
+#### Starting it day to day
+
+After that one-time setup, **double-click `start-buschain.bat`** in the repo
+folder. It starts the server and opens the browser once the port is actually
+answering. To keep it off the desktop hunt: right-click the file →
+**Send to → Desktop (create shortcut)**, and pin that shortcut to the taskbar
+if you like.
+
+The console window it opens *is* the server — closing it stops the app. Double-
+clicking again while it is already running just opens the browser again instead
+of failing.
+
 Two things specific to a Windows run:
 
-- **Start the server from the repo directory.** `DEFAULT_DB` is relative, so
-  `buschain.db` is created in *whatever* directory you launch from — start it
-  elsewhere and you silently get a new empty database rather than an error.
-  This is the one behavior deliberately left unchanged, since fixing it would
-  move an existing database.
+- **`start-buschain.bat` exists because the directory matters.** `DEFAULT_DB`
+  is relative, so `buschain.db` is created in *whatever* directory the server
+  is launched from — start it elsewhere and you silently get a new empty
+  database rather than an error. The launcher pins the directory to its own
+  folder, so this only bites if you start the server by hand from a shell.
+  The relative path itself is deliberately left unchanged, since fixing it
+  would move an existing database.
 - **Clone somewhere outside OneDrive.** On Windows 11, Known Folder Move puts
   `Documents` and `Desktop` under sync by default, and the `.db`/`-wal`/`-shm`
   trio doesn't survive being synced as three independent files. `C:\dev\buschain`
