@@ -285,6 +285,32 @@ Key decisions worth knowing before editing:
   integrity check. Refusing the action instead would leave a planner with a
   bus, a trip, and no way to say so. It records no chain provenance, so no
   connector is drawn and `broken_chains` has nothing to hang off.
+- **Dragging a bar refuses the impossible, not the suboptimal.** A trip dragged
+  up or down the board moves to another bus; sideways it moves its own dates.
+  The two are locked to one axis per gesture, because they are different kinds
+  of decision — one records a routing choice, the other edits source data the
+  export splices — and a diagonal drag would have to mean both at once inside a
+  single undo step. The vertical drop is gated by `graph.insertion_ok`, which is
+  `feasible_edges` asked from the timeline's side: `feasible_edges` walks supply
+  trips, so it can only ever name a bus that already has work to hand over, and
+  it would refuse every parked one. The line `insertion_ok` draws instead is the
+  brief's own (acceptance criterion 3: every consecutive pair satisfies the
+  rules **or is enumerated**) — it refuses running two trips at once, departing
+  before the bus could have arrived (`min_gap_days`, empty run included), and a
+  company rule 3 forbids; it permits the rest and leaves rule 1's three-rest-day
+  ceiling to `checks.unit_integrity`. Measured, not assumed: 34 of the reference
+  workbook's 183 consecutive pairs are already wider than the window, so a drop
+  refusing them would refuse about a fifth of what the sheet in front of the
+  planner records. A placement inside the window records a chain link exactly as
+  an accepted suggestion would; a wider one records the assignment alone, and
+  the note under the pointer says so before the drop. `test_links.py` pins the
+  two rulebooks together on every timeline a bus could actually run, and names
+  the two corners where they diverge on timelines that were already impossible.
+  The client sends only *where* the bar landed — `/reassign` re-derives what
+  that means, so a board left open cannot write a decision the engine no longer
+  stands behind. An imported bus can be dragged like any other: see the
+  re-chain bullet below for why that is consistent with the planner never
+  touching one.
 - **The plan is derived state, never stored.** `engine/plan.py` builds
   multi-hop chains by running the feasible-link graph forward — a covered trip
   becomes supply for the next hop. It is recomputed on every `evaluate()` and
@@ -307,13 +333,19 @@ Key decisions worth knowing before editing:
   `engine/rechain.py` restates the world as if the releasable future
   assignments had never been made and hands that to the ordinary `evaluate()` —
   one planner, one set of rules. Three boundaries decide what "releasable"
-  means, and none is negotiable: only assignments **this app wrote** (a company
-  name from the spreadsheet is source data, the same boundary `repo.unassign`
-  enforces one row at a time, and only where the imported cell was blank — an
+  means, and none is negotiable: only assignments **this app wrote**
+  (`repo.system_assigned_ids`, and only where the imported cell was blank — an
   override sitting *on top* of a sheet value would not free the trip, it would
   restore the sheet's); only trips that have **not started yet**; and never a
   locked one. On the reference data that is 60 releasable against 250 future
-  assignments frozen by the source-file rule.
+  assignments the planner will not touch. This is a rule about **automation**,
+  not about who may edit what: a person can retype or clear an imported bus
+  from the Data tab, and (since the drag) from the board — both write the same
+  Company-cell override, and clearing one exports a blank where the sheet named
+  a bus. What must never happen is a bulk replan silently overwriting what the
+  spreadsheet said, which is why the boundary lives in `system_assigned_ids`
+  rather than in `repo.unassign`, where it used to sit as a side effect of
+  clearing-by-deleting-the-override.
 - **A re-chain is previewed because coverage is not monotone under a release.**
   Releasing N assignments does not return N: the replan can spend a bus on a
   trip the old arrangement left uncovered and strand the one it took the bus

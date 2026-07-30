@@ -2571,7 +2571,14 @@ function boardRow(r, ctx) {
   // "idle since Sep" is right here, so this is where they click to ask why.
   if (tailId) label.dataset.trip = tailId;
 
-  return el("div", { class: "board-row " + r.kind }, label, canvas);
+  const row = el("div", { class: "board-row " + r.kind }, label, canvas);
+  // What a drop onto this row means. The key is the engine's own — 'company|unit'
+  // for a bus, 'adhoc|company' for a lane — so the drop-targets reply can be
+  // matched against rows without the client re-deriving either naming.
+  row.dataset.rowKey = r.key;
+  row.dataset.rowKind = r.kind;
+  row.dataset.rowLabel = r.label;
+  return row;
 }
 
 function boardAxis(t0, days, ctx) {
@@ -3246,18 +3253,25 @@ function renderWorklist() {
     return;
   }
   for (const b of S.engine.broken_chains) {
-    const canUnassign = "Company name" in (S.overrides[b.assignment] || {});
+    /* An imported bus can be cleared too — it writes a blank Company cell,
+       exactly as typing over it in the Data tab does. The button says so
+       rather than being withheld: what used to hide it was the store's old
+       refusal, and that was an artefact of clearing-by-deleting-the-override
+       (see Repo._clear_assignment), not a rule about source data. */
+    const imported = !("Company name" in (S.overrides[b.assignment] || {}));
     box.append(el("div", { class: "cand" },
       el("span", {}, tripLabel(b.assignment)),
       el("span", { class: "reason" },
         `relied on ${tripLabel(b.canceled_dependency)} (canceled/unassigned)`),
-      canUnassign
-        ? el("button", { class: "btn small",
-            // mutate: the in-flight guard, since this button has no confirm.
-            onclick: () => mutate("/unassign", { trip: b.assignment },
-                                  null, { keepSel: true }) },
-            "Unassign & re-suggest")
-        : el("span", { class: "hint" }, "source-file assignment — resolve in Excel or via status"),
+      el("button", { class: "btn small",
+        title: imported
+          ? "This bus came from the spreadsheet. Clearing it exports a blank "
+            + "Company cell for this row; undo reverses it."
+          : "Frees the trip so the suggester re-proposes it.",
+        // mutate: the in-flight guard, since this button has no confirm.
+        onclick: () => mutate("/unassign", { trip: b.assignment },
+                              null, { keepSel: true }) },
+        imported ? "Clear sheet's bus & re-suggest" : "Unassign & re-suggest"),
     ));
   }
 }
@@ -3597,6 +3611,10 @@ document.querySelectorAll('input[name="direction"]').forEach((r) =>
    slots carry their own handler, since each one closes over the exact
    suggestion it would accept — no id round-tripping through the DOM. */
 $("#board").addEventListener("click", (e) => {
+  // A drag ends with a click on the common ancestor of press and release,
+  // which here is the board itself — i.e. "empty canvas", i.e. clear the
+  // selection. Swallowing it is what keeps a move from also deselecting.
+  if (DRAG_WAS_A_DRAG) { DRAG_WAS_A_DRAG = false; return; }
   if (e.target.closest(".ghost")) return;
   /* Three ways into a unit's panel, all resolving to its tail: the bar itself,
      the row label (which carries the "idle since Sep" note, so it is where the
@@ -3609,6 +3627,265 @@ $("#board").addEventListener("click", (e) => {
   SEL = bar ? bar.dataset.trip : null;      // empty canvas clears
   renderBoard();
 });
+
+/* ---------- dragging a bar ---------- */
+
+/* Two gestures share one grab, and the first few pixels decide which:
+   sideways moves the trip's DATES, up or down moves it to another BUS. Locked
+   rather than combined, because the two are different kinds of decision — one
+   edits source data the export splices, the other records a routing decision —
+   and a diagonal drag would have to mean both at once, in one undo step, with
+   no way to express "I only meant the second one".
+
+   Everything here is preview only. Nothing is written until the pointer comes
+   up, the server re-derives what the drop means (see /reassign), and the
+   ordinary refetch-and-render loop takes over. */
+
+const DRAG_THRESHOLD = 5;                 // px before a press becomes a drag
+let DRAG = null;
+/* The click that follows a drag is not a selection — see the handler above. */
+let DRAG_WAS_A_DRAG = false;
+
+/* ISO dates parse as UTC midnight and toISOString renders in UTC, so shifting
+   by whole days is exact arithmetic in both directions — the same property the
+   board's axis relies on, and the reason no timezone can move a trip a day. */
+const shiftISO = (iso, days) =>
+  new Date(Date.parse(iso) + days * DAY_MS).toISOString().slice(0, 10);
+
+const dropKey = (t) =>
+  t.unit == null ? `adhoc|${t.company}` : `${t.company}|${t.unit}`;
+
+/* Any assignment can be taken back off, including one that arrived on the
+   spreadsheet: clearing it writes an empty Company cell, which is what typing
+   over it in the Data tab has always done. Only the planner is barred from
+   touching imported assignments (see Repo.system_assigned_ids and the master
+   re-chain) — a person dragging a bar is not the planner. */
+const canUncover = (t) => !!t.assignment;
+
+/* What dropping the dragged bar on this row would do. One function behind the
+   row highlight, the note that follows the pointer and the commit itself, so
+   the three can never tell the user different things. */
+function dropVerdict(d, key) {
+  if (!key) return { ok: false, note: "" };
+  if (key === d.fromKey) return { ok: false, note: "already on this row" };
+  if (key === "uncovered") {
+    if (!canUncover(d.trip)) {
+      return { ok: false, note: "this trip has no bus to take off" };
+    }
+    // Naming the export consequence for an imported bus: clearing it splices a
+    // BLANK over what the spreadsheet said, which is a different thing from
+    // dropping an assignment this app made and worth knowing before the drop.
+    const imported = !("Company name" in (S.overrides[d.trip.id] || {}));
+    return { ok: true, action: "unassign",
+             note: "take the bus off this trip — it returns to the uncovered queue"
+               + (imported ? "; this bus came from the sheet, so the export will "
+                             + "carry a blank where it named one" : "") };
+  }
+  if (!d.targets) return { ok: false, note: "asking the engine…" };
+  const target = d.targets.get(key);
+  if (target) return { ok: true, action: "reassign", target, note: dropStory(target) };
+  return { ok: false, note: d.refused.get(key) || "cannot take this trip" };
+}
+
+/* What the drop costs, named before it happens — the same bargain the manual
+   pickers strike by putting the rule they break inside the button. Never names
+   the bus: the caller prefixes the row label, so that every verdict, refusals
+   included, reads the same way round. */
+function dropStory(t) {
+  if (t.unit == null) {
+    return "an ad hoc bus beyond the charter: it chains to nothing and "
+      + "generates no supply";
+  }
+  if (t.chains) {
+    return `chains on ${plural(freeDays(t.gap_days), "free day")} after its `
+      + "previous trip"
+      + (t.reposition ? ", with an EMPTY RUN to get there" : "");
+  }
+  if (t.gap_days == null) return "lands first on this bus";
+  // The case the drop exists for and a suggestion could never express: legal,
+  // but too far from the previous trip to be a handover. Saying so is the
+  // difference between a considered decision and a surprise in the integrity
+  // list afterwards.
+  return `leaves the bus parked ${plural(freeDays(t.gap_days), "free day")} `
+    + "after its previous trip: further than a chain reaches, so no link is "
+    + "recorded";
+}
+
+function dragNote(e, text, ok) {
+  let note = $("#drag-note");
+  if (!note) {
+    note = el("div", { id: "drag-note" });
+    document.body.append(note);
+  }
+  note.textContent = text;
+  note.className = ok ? "ok" : "bad";
+  note.style.left = e.clientX + 14 + "px";
+  note.style.top = e.clientY + 18 + "px";
+  note.classList.toggle("hidden", !text);
+}
+
+$("#board").addEventListener("pointerdown", (e) => {
+  if (e.button !== 0 || MUTATING) return;
+  const bar = e.target.closest(".bar");
+  const trip = bar && tripById(bar.dataset.trip);
+  if (!trip) return;
+  /* Where the trip actually IS, from its assignment — not from the row the bar
+     was drawn in. In auto mode a provisional bar sits on the unit that would
+     run it while still being uncovered, and reading the row would call
+     dropping it there "already on this row" when it is in fact the accept. */
+  const a = trip.assignment;
+  const fromKey = !a ? "uncovered"
+    : a.unit == null ? `adhoc|${a.company}` : `${a.company}|${a.unit}`;
+  DRAG = { trip, bar, fromKey,
+           x0: e.clientX, y0: e.clientY, axis: null, days: 0,
+           targets: null, refused: null, overRow: null, overKey: null,
+           pending: null, canceled: false };
+  // Capture on the bar: the pointer will leave it immediately (that is the
+  // whole gesture), and without capture the move events would go to whatever
+  // is underneath instead.
+  bar.setPointerCapture(e.pointerId);
+});
+
+$("#board").addEventListener("pointermove", (e) => {
+  const d = DRAG;
+  if (!d || d.canceled) return;
+  const dx = e.clientX - d.x0, dy = e.clientY - d.y0;
+  if (!d.axis) {
+    if (Math.abs(dx) < DRAG_THRESHOLD && Math.abs(dy) < DRAG_THRESHOLD) return;
+    d.axis = Math.abs(dx) >= Math.abs(dy) ? "x" : "y";
+    d.bar.classList.add("dragging");
+    $("#board").classList.add("dragging-" + d.axis);
+    if (d.axis === "y") {
+      /* Asked once, at the moment the gesture commits to being a move. It is a
+         full engine evaluate, and nothing can change the answer while the
+         pointer is down — no state mutates mid-drag. The drop awaits this if
+         the user is faster than the round trip. */
+      d.pending = api(`/drop-targets/${d.trip.id}`).then((res) => {
+        d.targets = new Map(res.targets.map((t) => [dropKey(t), t]));
+        d.refused = new Map(
+          res.refused.map((r) => [`${r.company}|${r.unit}`, r.reason]));
+        if (DRAG === d) markDropRows(d);
+      }).catch((err) => {
+        toast(err.message, true);
+        d.targets = new Map();
+        d.refused = new Map();
+      });
+    }
+  }
+
+  if (d.axis === "x") {
+    d.days = Math.round(dx / DAY_W);
+    d.bar.style.transform = `translateX(${d.days * DAY_W}px)`;
+    dragNote(e, d.days
+      ? `${shiftISO(d.trip.start, d.days)} → ${shiftISO(d.trip.end, d.days)}`
+        + ` (${d.days > 0 ? "+" : ""}${d.days}d) — moves the trip's dates in the`
+        + " sheet; the span is unchanged"
+      : "sideways moves the trip's dates · up and down moves it to another bus",
+      true);
+    return;
+  }
+
+  d.bar.style.transform = `translateY(${dy}px)`;
+  /* elementsFromPoint, not elementFromPoint: the date axis is sticky and
+     paints OVER the top of the board, so with the board scrolled, the topmost
+     element across a whole strip of visible rows is the axis — and singular
+     elementFromPoint returned it, making every drop in that strip silently
+     find no row at all. The row is in the hit stack underneath; take the first
+     one that is a lane. (The dragged bar is pointer-transparent — see
+     .bar.dragging — so it is never in the stack to begin with.) */
+  const row = document.elementsFromPoint(e.clientX, e.clientY)
+    .map((n) => n.closest && n.closest(".board-row[data-row-key]"))
+    .find(Boolean) || null;
+  if (row !== d.overRow) {
+    if (d.overRow) d.overRow.classList.remove("drop-hover", "drop-bad");
+    d.overRow = row;
+    d.overKey = row ? row.dataset.rowKey : null;
+  }
+  const v = dropVerdict(d, d.overKey);
+  if (row) {
+    row.classList.toggle("drop-hover", v.ok);
+    row.classList.toggle("drop-bad", !v.ok);
+  }
+  dragNote(e, row ? `${row.dataset.rowLabel} — ${v.note}` : "", v.ok);
+});
+
+function markDropRows(d) {
+  for (const row of document.querySelectorAll("#board .board-row[data-row-key]")) {
+    row.classList.toggle("drop-ok", dropVerdict(d, row.dataset.rowKey).ok);
+  }
+}
+
+function endDrag(d) {
+  d.bar.classList.remove("dragging");
+  d.bar.style.transform = "";
+  $("#board").classList.remove("dragging-x", "dragging-y");
+  for (const row of document.querySelectorAll("#board .board-row")) {
+    row.classList.remove("drop-ok", "drop-hover", "drop-bad");
+  }
+  const note = $("#drag-note");
+  if (note) note.classList.add("hidden");
+}
+
+$("#board").addEventListener("pointerup", async (e) => {
+  const d = DRAG;
+  if (!d) return;
+  DRAG = null;
+  endDrag(d);
+  if (!d.axis) return;                  // never passed the threshold: a click
+  /* Set here and nowhere else, because a click follows a release and nothing
+     else: setting it when the drag was CANCELLED would leave it armed with no
+     click to consume it, and swallow the user's next real one. */
+  DRAG_WAS_A_DRAG = true;
+  if (d.canceled) return;
+
+  if (d.axis === "x") {
+    if (!d.days) return;
+    /* Both ends in one call: moving one date and then the other would be two
+       undo steps for one gesture, and would re-validate the row in between
+       with a span the contract refuses (see Repo.set_cells). keepSel, because
+       a trip that just moved is the one you are still looking at. */
+    await mutate(`/trips/${d.trip.id}/cells`, { values: {
+      "Start date": shiftISO(d.trip.start, d.days),
+      "End date": shiftISO(d.trip.end, d.days),
+    } }, `Moved ${tripLabel(d.trip.id)} ${d.days > 0 ? "+" : ""}${d.days} day`
+       + `${Math.abs(d.days) === 1 ? "" : "s"}`, { keepSel: true });
+    return;
+  }
+
+  if (d.pending) await d.pending;       // dropped faster than the round trip
+  const v = dropVerdict(d, d.overKey);
+  if (!v.ok) {
+    if (v.note) toast(v.note, true);
+    return;
+  }
+  if (v.action === "unassign") {
+    await mutate("/unassign", { trip: d.trip.id },
+                 `${tripLabel(d.trip.id)} is uncovered again`, { keepSel: true });
+    return;
+  }
+  await mutate("/reassign",
+               { trip: d.trip.id, company: v.target.company, unit: v.target.unit },
+               `${tripLabel(d.trip.id)} → ${unitLabel(v.target.company, v.target.unit)}`,
+               { keepSel: true });
+});
+
+/* Cancel paths. Escape while dragging, and the pointercancel the browser fires
+   when something else claims the gesture (a scroll, a context menu); both have
+   to put the bar back, since the transform is the only thing moving it.
+   pointercancel means no pointerup is coming, so the drag is dropped outright;
+   Escape is only marked, because the button is still down and the release —
+   and the click after it — still have to be accounted for. */
+$("#board").addEventListener("pointercancel", () => {
+  if (DRAG) { endDrag(DRAG); DRAG = null; }
+});
+document.addEventListener("keydown", (e) => {
+  if (!DRAG || DRAG.canceled || e.key !== "Escape") return;
+  DRAG.canceled = true;
+  endDrag(DRAG);
+  // Escape here means "put that bar back", not "clear the selection" — which
+  // is what the handler below would otherwise also do with the same keypress.
+  e.stopPropagation();
+}, true);                               // ahead of the selection handler
 
 document.addEventListener("keydown", (e) => {
   if (!SEL) return;

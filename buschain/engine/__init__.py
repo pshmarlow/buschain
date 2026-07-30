@@ -9,6 +9,7 @@ incremental invalidation logic anywhere.
 from __future__ import annotations
 
 from collections import defaultdict
+from dataclasses import dataclass
 from datetime import date
 from typing import AbstractSet, Sequence
 
@@ -75,6 +76,82 @@ def evaluate(
         plan=plan_mod.build_plan(
             supply_trips, demand_trips, unit_assignments, objective, reposition),
     )
+
+
+@dataclass(frozen=True)
+class DropTarget:
+    """A bus that may take one particular trip, and what that would mean.
+
+    supply is set only when the placement is a rule-1 handover: a link is a
+    routing decision under the rules, and a trip dropped on a bus that has been
+    parked a fortnight is an assignment, not a chain. gap_days and
+    successor_gap are carried either way so the board can say what the drop
+    costs before it happens.
+    """
+    company: str
+    unit: int | None                    # None: the company's ad hoc lane
+    supply: TripId | None
+    gap_days: int | None
+    successor_gap: int | None
+    reposition: bool                    # the bus has to change city to get there
+    chains: bool
+
+
+@dataclass(frozen=True)
+class DropRefusal:
+    """A bus that may NOT take a trip, and which rule says so."""
+    company: str
+    unit: int
+    reason: str
+
+
+def drop_targets(
+    report: ContractReport,
+    registry: Registry,
+    trip_id: TripId,
+    reposition: bool = True,
+) -> tuple[list[DropTarget], list[DropRefusal]]:
+    """Every bus that could take `trip_id`, whether or not it is assigned now.
+
+    Answers the board's drag gesture: a trip is picked up and every legal
+    landing place has to light up before it is dropped. Computed here rather
+    than in the browser for the usual reason — the rules live in graph.py, and
+    a second copy in JS would be a second place for them to be wrong.
+
+    The trip's CURRENT unit is offered like any other: a drag that ends where
+    it started is a no-op the client drops, not an error the engine invents.
+    Its own assignment is not subtracted from the timelines either, because
+    insertion_ok excludes the trip being placed — a bus does not conflict with
+    itself.
+    """
+    trip = next((t for t in report.trips if t.id == trip_id), None)
+    if trip is None or trip.status is Status.CANCELED:
+        return [], []
+    _, _, _, unit_assignments, _ = _split(report, frozenset(), None)
+
+    out: list[DropTarget] = []
+    refused: list[DropRefusal] = []
+    for key, company in sorted(registry.companies.items()):
+        # An ad hoc lane is chain-invisible: it generates no supply and holds
+        # no timeline, so rule 3 is the only thing that can refuse it. That is
+        # also why it records no link.
+        if graph.company_ok(key, trip):
+            out.append(DropTarget(company=key, unit=None, supply=None,
+                                  gap_days=None, successor_gap=None,
+                                  reposition=False, chains=False))
+        for unit in sorted(company.units):
+            spot, why = graph.insertion_verdict(
+                trip, unit_assignments.get((key, unit), ()), key, reposition)
+            if spot is None:
+                refused.append(DropRefusal(company=key, unit=unit, reason=why or ""))
+                continue
+            out.append(DropTarget(
+                company=key, unit=unit,
+                supply=(spot.predecessor.id
+                        if spot.chains and spot.predecessor else None),
+                gap_days=spot.gap_days, successor_gap=spot.successor_gap,
+                reposition=spot.reposition, chains=spot.chains))
+    return out, refused
 
 
 def _split(report: ContractReport, locked: AbstractSet[TripId],

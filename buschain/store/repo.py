@@ -1037,21 +1037,68 @@ class Repo:
                 self._accept_one(demand, company_key, unit, supply, registry)
         return len(links)
 
+    def _clear_assignment(self, row: sqlite3.Row) -> None:
+        """Blank the assignment cell, whoever wrote it. No transaction — see
+        unassign/reassign.
+
+        This is precisely what typing over the Company cell in the Data tab
+        does, and delegating to the same core is the point: set_cell has never
+        had a provenance check, so an imported bus could always be retyped or
+        cleared there. What used to be enforced here was not really "source
+        data is read-only" — it was the shape of the old implementation, which
+        cleared an assignment by DELETING the override. That is a no-op when
+        the value came from the sheet, so rather than silently doing nothing it
+        refused, and the board ended up the one screen that could not edit an
+        imported assignment. Writing an empty override is how the Data tab
+        expresses the same thing, and it exports as a blanked cell.
+
+        The planner's rule is untouched and lives elsewhere: a master re-chain
+        still releases only what the app itself assigned
+        (repo.system_assigned_ids). Automation must not overwrite what the
+        spreadsheet says; a person acting deliberately may.
+
+        A trip with no assignment at all is not an error here — reassign calls
+        this on its way to writing one, and _set_cell drops the no-op override.
+        """
+        self._set_cell(row, _COMPANY_TITLE, "")
+
     def unassign(self, trip_id: TripId) -> None:
-        """Clear an in-system assignment (e.g. from the broken-chain worklist).
-        Only assignments the system wrote can be cleared — source-file
-        assignments are source data."""
+        """Clear a trip's assignment (the worklist, and the board's drag onto
+        the uncovered lane)."""
         row = self._db_row(trip_id)
-        if _COMPANY_TITLE not in self._overrides_for(row["id"]):
-            raise RepoError("Trip's assignment came from the source file; edit it there")
+        raw = self._raw_with_overlays(row)
+        if not str(raw.get(COMPANY_NAME) or "").strip():
+            raise RepoError("Trip has no assignment to clear")
         with self.conn:
+            self._clear_assignment(row)
+
+    def reassign(self, trip_id: TripId, company_key: str, unit: int | None,
+                 supply: TripId | None) -> None:
+        """Move a trip onto a different bus — one action, one transaction.
+
+        _accept_one refuses a trip that already has an assignment, so a move is
+        a clear followed by an accept. Split across two requests it would be
+        two undo entries, and a failure between them would leave the trip on no
+        bus at all — the board's drag would have silently unassigned it.
+
+        Deliberately also handles the trip that had no assignment to begin
+        with, so the board has ONE call for "put this trip on that bus"
+        whichever row it was dragged from.
+        """
+        registry = self.registry()
+        row = self._db_row(trip_id)
+        with self.conn:
+            self._clear_assignment(row)
+            # The link OUT of this trip goes too: it claims a bus that no
+            # longer runs this trip fed the next one. Exactly the trade
+            # _set_cell makes when someone types a different company over an
+            # assignment. unassign deliberately does NOT do this — clearing a
+            # bus leaves the successor on the broken-chain worklist, which is
+            # the designed flow for it; moving a bus makes the link simply
+            # wrong, and nothing downstream would report it.
             self.conn.execute(
-                "DELETE FROM cell_overrides WHERE trip_id = ? AND column_title = ?",
-                (row["id"], _COMPANY_TITLE),
-            )
-            self.conn.execute(
-                "DELETE FROM accepted_links WHERE demand_trip_id = ?", (row["id"],)
-            )
+                "DELETE FROM accepted_links WHERE supply_trip_id = ?", (row["id"],))
+            self._accept_one(trip_id, company_key, unit, supply, registry)
 
     # -- locks ---------------------------------------------------------------
     # A lock says "do not re-decide this trip". It is the exemption list for
@@ -1155,6 +1202,37 @@ class Repo:
             (trip_db_id, title, value),
         )
 
+    def _set_cell(self, row: sqlite3.Row, title: str, value: str) -> None:
+        """One cell edit against a resolved row, no transaction — see
+        set_cell/set_cells."""
+        letter = COLUMN_LETTERS[title]
+        original = json.loads(row["raw"]).get(letter)
+        if value == ("" if original is None else str(original)):
+            # Edited back to the imported value: drop the override so the
+            # export does not splice a cell that did not actually change.
+            self.conn.execute(
+                "DELETE FROM cell_overrides WHERE trip_id = ? AND column_title = ?",
+                (row["id"], title),
+            )
+        else:
+            self._write_override(row["id"], title, value)
+        if title == _COMPANY_TITLE:
+            # Typing over the assignment discards the chain provenance:
+            # the recorded supply no longer explains what the cell says.
+            self.conn.execute(
+                "DELETE FROM accepted_links WHERE demand_trip_id = ?", (row["id"],)
+            )
+            # A NEW assignment also kills the link OUT of this trip — it
+            # claims a bus that no longer runs this trip fed the next one
+            # (the same trade rechain and delete_trips make). Clearing
+            # the cell keeps it: the downstream trip then lands on the
+            # broken-chain worklist, which is the designed unassign flow.
+            if value.strip():
+                self.conn.execute(
+                    "DELETE FROM accepted_links WHERE supply_trip_id = ?",
+                    (row["id"],)
+                )
+
     def set_cell(self, trip_id: TripId, title: str, value: str) -> None:
         """Record an in-system edit of one cell.
 
@@ -1163,37 +1241,34 @@ class Repo:
         typo lands the row in the non-operable list with a reason rather than
         being rejected at the keystroke.
         """
-        letter = COLUMN_LETTERS.get(title)
-        if letter is None:
+        if title not in COLUMN_LETTERS:
             raise RepoError(f"{title!r} is not a column of the contract layout")
         row = self._db_row(trip_id)
-        original = json.loads(row["raw"]).get(letter)
         with self.conn:
-            if value == ("" if original is None else str(original)):
-                # Edited back to the imported value: drop the override so the
-                # export does not splice a cell that did not actually change.
-                self.conn.execute(
-                    "DELETE FROM cell_overrides WHERE trip_id = ? AND column_title = ?",
-                    (row["id"], title),
-                )
-            else:
-                self._write_override(row["id"], title, value)
-            if title == _COMPANY_TITLE:
-                # Typing over the assignment discards the chain provenance:
-                # the recorded supply no longer explains what the cell says.
-                self.conn.execute(
-                    "DELETE FROM accepted_links WHERE demand_trip_id = ?", (row["id"],)
-                )
-                # A NEW assignment also kills the link OUT of this trip — it
-                # claims a bus that no longer runs this trip fed the next one
-                # (the same trade rechain and delete_trips make). Clearing
-                # the cell keeps it: the downstream trip then lands on the
-                # broken-chain worklist, which is the designed unassign flow.
-                if value.strip():
-                    self.conn.execute(
-                        "DELETE FROM accepted_links WHERE supply_trip_id = ?",
-                        (row["id"],)
-                    )
+            self._set_cell(row, title, value)
+
+    def set_cells(self, trip_id: TripId, values: Mapping[str, str]) -> None:
+        """Edit several cells of one row as a single action.
+
+        Written for the board's date drag, which moves Start date and End date
+        together. Two set_cell calls would be two undo entries for one gesture,
+        and — worse — the row would be re-validated in between with one date
+        moved and the other not: a backwards or 400-day span that the contract
+        correctly throws into the non-operable list (contract.MAX_TRIP_SPAN_DAYS),
+        making the trip vanish off the board mid-drag before the second write
+        put it back.
+
+        Every title is checked before anything is written, for the same reason
+        delete_trips resolves every id first: a half-applied edit is worse than
+        a refused one.
+        """
+        for title in values:
+            if title not in COLUMN_LETTERS:
+                raise RepoError(f"{title!r} is not a column of the contract layout")
+        row = self._db_row(trip_id)
+        with self.conn:
+            for title, value in values.items():
+                self._set_cell(row, title, value)
 
     def set_status(self, trip_id: TripId, status: Status) -> None:
         self.set_cell(trip_id, _STATUS_TITLE, status.value)

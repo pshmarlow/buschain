@@ -180,9 +180,32 @@ def test_status_change_flows_to_engine_and_broken_chains(repo):
     assert writes == {(2, STATUS): "Canceled", (3, COMPANY_NAME): "Ollex 1"}
 
 
-def test_unassign_only_for_system_written_assignments(repo):
+def test_unassign_clears_an_imported_assignment_as_a_blank(repo):
+    """Clearing an imported bus writes an EMPTY cell rather than refusing.
+
+    This used to raise, because unassign cleared by deleting the override —
+    a no-op when the value came from the sheet. The Data tab could always type
+    over the same cell, so the refusal only ever stopped the screens that went
+    through here. What stays barred is the PLANNER: system_assigned_ids is what
+    a master re-chain releases, and it still excludes this row.
+    """
     seeded(repo)
     import_rows(repo, RawTripRow(2, trip_values(company="Ollex 1")))
+    tid = TripId("sheet", 2)
+    repo.unassign(tid)
+
+    report, _, _ = repo.load_state()
+    assert next(t for t in report.trips if t.id == tid).assignment is None
+    # The export has to carry the blank, or the app and the workbook disagree.
+    plan = repo.build_export_plan()
+    writes = {(w.sheet_row, w.column): w.value for w in plan.cell_writes}
+    assert writes == {(2, COMPANY_NAME): ""}
+    assert tid not in repo.system_assigned_ids()
+
+
+def test_unassign_refuses_a_trip_with_no_assignment(repo):
+    seeded(repo)
+    import_rows(repo, RawTripRow(2, trip_values()))
     with pytest.raises(RepoError):
         repo.unassign(TripId("sheet", 2))
 

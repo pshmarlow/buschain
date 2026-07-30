@@ -136,6 +136,44 @@ typically shrinks it.
 follows the supply trip on that unit (`graph.py:159`). Mid-chain, driving the
 bus somewhere else would strand whatever comes next in the wrong city.
 
+### The same rules asked the other way round (`insertion_ok`)
+
+`feasible_edges` answers *"what can this bus pick up next?"* — it walks supply
+trips. That is the right question for the planner and the wrong one for the
+board's drag gesture, which has to say whether a bus may take a trip *at all*:
+a unit with no work to hand over (idle, or one whose trips all start later)
+produces no edge, and most of the fleet is parked most of the time.
+
+`insertion_ok` / `insertion_verdict` (`graph.py`) ask from the timeline's side —
+*"with this trip inserted, could one bus run this?"* — and draw the line at
+**impossible**, not **suboptimal**, which is where acceptance criterion 3 draws
+it too (every consecutive pair satisfies the rules *or is enumerated*):
+
+| Refused | Permitted, and enumerated instead |
+|---|---|
+| Overlapping an existing trip on that unit | A gap wider than `floor + MAX_REST_DAYS` — the bus is simply parked |
+| A gap below `min_gap_days` on either side — the bus cannot be there | A city change with time to spare, needing no approved ER |
+| A company the trip's `Y`/`N` names (rule 3 is hard) | A successor the bus already could not reach before the insert |
+
+That relaxation is measured, not assumed: **34 of the reference workbook's 183
+consecutive pairs are already wider than the window**, and the integrity check
+lists 36 findings on it. A drop that refused them would refuse roughly a fifth
+of what the sheet itself records.
+
+The narrower question — *is this pair a rule-1 handover?* — is answered
+separately as `Insertion.chains`, and that is what decides whether an accepted
+link is recorded. Inside the window, a dragged trip leaves exactly the
+provenance an accepted suggestion would; outside it, the assignment is written
+with no link, because a chain nobody could run is not worth recording.
+`reposition` gates the *link*, never the legality: a bus with a fortnight to
+spare needs no one's approval to be driven somewhere.
+
+`test_links.py` pins the two functions together — every edge `feasible_edges`
+emits must be an insertion `insertion_ok` allows, with the same supply, gap and
+ER flag — restricted to timelines a bus could actually run. Both documented
+divergences are on timelines that were already impossible, and both are named
+tests.
+
 ### Worked example
 
 `Kautra 3` finishes a trip in **CPH on Jul 5**. Candidate next trips:
@@ -386,10 +424,10 @@ All *listed, never auto-fixed*.
 |---|---|
 | 1 — D+1…D+4 window, max 3 rest days | `graph.py:16` constants, `min_gap_days` `graph.py:39`, applied `graph.py:168` |
 | 2 — city match on canonical codes | `graph.py:161` (`arr_city`/`dep_city` equality; codes canonicalized upstream in `model.Registry.resolve_city`) |
-| 3 — Y/N constraints + ad hoc fallback | `graph.py:82` (`_constraint_ok`), `reach.py:38`, fallback `suggest.py:66` |
+| 3 — Y/N constraints + ad hoc fallback | `graph.py` (`company_ok`, and `_constraint_ok` over it), `reach.py:38`, fallback `suggest.py:66` |
 | 4 — risk marks + broken-chain worklist | `deps.py:15` (`at_risk_chain`), `checks.py:96` (`broken_chains`) |
 | 5 — fleet over-commitment | `checks.py:18` (`fleet_warnings`; numbered-only, documented deviation) |
-| 6 — unit integrity | `checks.py:56` (reporting), `graph.py:97` (`_unit_timeline_ok`, prevention) |
+| 6 — unit integrity | `checks.py:56` (reporting), `graph.py` (`_unit_timeline_ok` for the planner, `insertion_ok` for the board's drag — same rules, opposite question) |
 | 7 — canceled excluded, retained | `__init__.py:84` (inside `_split`) |
 | 8 — graph model, greedy + exact | `graph.py` (edges = the model), `suggest.py` + `plan.py` (greedy consumers), `solve.py` (exact consumer — same edges, solved optimally) |
 | 9 — human-in-the-loop ranking | `suggest.py` (engine never assigns; `plan` is provisional; only `repo.accept` writes) |

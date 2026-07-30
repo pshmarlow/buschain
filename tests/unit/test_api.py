@@ -1024,3 +1024,236 @@ def test_rename_reaches_the_information_sheet_and_the_export(client):
     company_cells = [trips.cell(r, 14).value for r in range(2, 400)]
     assert any((c or "").startswith("Ollez") for c in company_cells)
     assert not any((c or "").startswith("Ollex") for c in company_cells)
+
+
+# ---------- the board's drag gesture ----------
+
+
+def _assigned_to_a_unit(state):
+    return [t for t in state["trips"]
+            if t["assignment"] and t["assignment"]["unit"] is not None
+            and t["status"] != "Canceled"]
+
+
+def _app_assigned(client):
+    """Accept one suggestion, so there is an assignment the app owns.
+
+    A freshly imported workbook has none: every bus on it came from the sheet,
+    and those are source data no drag may move. The tests below need the other
+    kind.
+    """
+    state = client.get("/api/state").json()
+    s = next(s for by_trip in [state["engine"]["suggestions_by_trip"]]
+             for group in by_trip.values() for s in group if s["kind"] == "chain")
+    res = client.post("/api/accept", json={
+        "demand": s["demand"], "company": s["company"], "unit": s["unit"],
+        "supply": s["supply"]})
+    assert res.status_code == 200, res.text
+    return s["demand"]
+
+
+def test_drop_targets_offer_buses_no_suggestion_ever_could(client):
+    """Why this endpoint exists rather than reusing suggestions_by_trip.
+
+    A suggestion hangs off a supply trip, so it can only ever name a bus that
+    already has work to hand over — the drag has to light up the parked ones
+    too. Two properties, checked over every uncovered trip the planner has an
+    opinion about: the drop never refuses a link the planner proposes (the
+    board contradicting itself), and somewhere on this dataset it offers more.
+    """
+    state = client.get("/api/state").json()
+    by_trip = state["engine"]["suggestions_by_trip"]
+    free = [t for t in state["trips"]
+            if not t["assignment"] and t["status"] != "Canceled" and by_trip.get(t["id"])]
+    assert free, "real data should leave uncovered trips with options"
+
+    widened = 0
+    for trip in free[:40]:                      # a sample: each is a full evaluate
+        suggested = {(s["company"], s["unit"]) for s in by_trip[trip["id"]]}
+        targets = client.get(f"/api/drop-targets/{trip['id']}").json()["targets"]
+        units = {(t["company"], t["unit"]) for t in targets if t["unit"] is not None}
+        assert suggested <= units, \
+            f"{trip['id']}: a drop refused a link the planner proposes"
+        widened += bool(units - suggested)
+        # Every suggested bus keeps the link the suggestion would have recorded,
+        # so a dragged trip and an accepted one leave the same provenance.
+        by_key = {(t["company"], t["unit"]): t for t in targets}
+        for s in by_trip[trip["id"]]:
+            if s["kind"] == "chain":
+                assert by_key[(s["company"], s["unit"])]["supply"] == s["supply"]
+    assert widened, "no trip gained a bus — insertion_ok is not widening anything"
+
+
+def test_reassign_moves_a_trip_between_units_and_undoes(client):
+    """The gesture the feature is for: one call, one undo step, and the new bus
+    visible everywhere — the Data tab reads the same Company cell the export
+    splices, so writing it once is what makes the move propagate."""
+    tid = _app_assigned(client)
+    state = client.get("/api/state").json()
+    trip = next(t for t in state["trips"] if t["id"] == tid)
+    here = (trip["assignment"]["company"], trip["assignment"]["unit"])
+    targets = client.get(f"/api/drop-targets/{tid}").json()["targets"]
+    target = next((t for t in targets
+                   if t["unit"] is not None and (t["company"], t["unit"]) != here), None)
+    assert target, "an app-assigned trip should be movable to some other bus"
+
+    res = client.post("/api/reassign", json={
+        "trip": tid, "company": target["company"], "unit": target["unit"]})
+    assert res.status_code == 200, res.text
+
+    after = client.get("/api/state").json()
+    now = next(t for t in after["trips"] if t["id"] == tid)
+    assert now["assignment"] == {"company": target["company"], "unit": target["unit"]}
+    # Written as a cell override, which is what the Data tab renders and the
+    # xlsx export splices — one write, and the decision is everywhere.
+    assert after["overrides"][tid], "the move must leave an edited cell behind"
+    assert tid in after["engine"]["timelines"][f"{target['company']}|{target['unit']}"]
+    assert tid not in after["engine"]["timelines"].get(f"{here[0]}|{here[1]}", [])
+
+    assert client.post("/api/undo").status_code == 200
+    back = client.get("/api/state").json()
+    assert next(t for t in back["trips"] if t["id"] == tid)["assignment"] \
+        == trip["assignment"]
+
+
+def test_reassign_refuses_a_bus_the_engine_did_not_offer(client):
+    """The client sends where the bar landed, never what it means. A drop the
+    engine does not sanction is refused server-side even if the browser drew it
+    as legal — the same rule the plan commits follow."""
+    tid = _app_assigned(client)
+    state = client.get("/api/state").json()
+    targets = client.get(f"/api/drop-targets/{tid}").json()["targets"]
+    legal = {(t["company"], t["unit"]) for t in targets}
+    company, illegal = next(
+        (c["key"], u) for c in state["registry"]["companies"]
+        for u in c["units"] if (c["key"], u) not in legal)
+
+    res = client.post("/api/reassign", json={
+        "trip": tid, "company": company, "unit": illegal})
+    assert res.status_code == 409
+    assert "cannot take" in res.json()["detail"]
+
+
+def test_reassign_moves_an_imported_assignment_like_the_data_tab_does(client):
+    """A bus that arrived on the spreadsheet can be dragged to another bus.
+
+    Typing over the Company cell in Data has always been able to do this
+    (set_cell has no provenance check), so refusing it on the board made one
+    screen able to express what the other could not. Both now write the same
+    override, and the export carries the new bus.
+    """
+    state = client.get("/api/state").json()
+    from_sheet = next(t for t in _assigned_to_a_unit(state)
+                      if t["id"] not in state["overrides"])
+    was = (from_sheet["assignment"]["company"], from_sheet["assignment"]["unit"])
+    targets = client.get(f"/api/drop-targets/{from_sheet['id']}").json()["targets"]
+    other = next(t for t in targets
+                 if t["unit"] is not None and (t["company"], t["unit"]) != was)
+
+    res = client.post("/api/reassign", json={
+        "trip": from_sheet["id"], "company": other["company"], "unit": other["unit"]})
+    assert res.status_code == 200, res.text
+    after = client.get("/api/state").json()
+    assert next(t for t in after["trips"] if t["id"] == from_sheet["id"])["assignment"] \
+        == {"company": other["company"], "unit": other["unit"]}
+
+    assert client.post("/api/undo").status_code == 200
+    back = client.get("/api/state").json()
+    assert next(t for t in back["trips"]
+                if t["id"] == from_sheet["id"])["assignment"] \
+        == from_sheet["assignment"]
+    assert from_sheet["id"] not in back["overrides"], \
+        "undo must leave the row as imported, not as an override that agrees"
+
+
+def test_unassigning_an_imported_bus_exports_a_blank(client):
+    """Clearing an imported assignment writes an EMPTY Company cell rather than
+    dropping an override that was never there — the old implementation cleared
+    by deleting the override, which is a no-op on a source value and is why
+    this used to be refused. The blank is the visible consequence, so it is
+    pinned here rather than left to be discovered in Excel.
+    """
+    state = client.get("/api/state").json()
+    from_sheet = next(t for t in _assigned_to_a_unit(state)
+                      if t["id"] not in state["overrides"])
+    assert client.post("/api/unassign", json={"trip": from_sheet["id"]}).status_code == 200
+
+    after = client.get("/api/state").json()
+    assert next(t for t in after["trips"]
+                if t["id"] == from_sheet["id"])["assignment"] is None
+    assert after["overrides"][from_sheet["id"]]["Company name"] == ""
+
+    import io
+    import openpyxl
+    ws = openpyxl.load_workbook(
+        io.BytesIO(client.get("/api/export.xlsx").content))["Capitals 2026"]
+    col = list(after["columns"]).index("Company name") + 1
+    assert not (ws.cell(int(from_sheet["id"].split(":")[1]), col).value or "").strip()
+
+    # The planner's boundary is untouched: a re-chain still releases only what
+    # the app assigned, so automation cannot do what this deliberate act did.
+    assert client.post("/api/undo").status_code == 200
+    restored = client.get("/api/state").json()
+    assert next(t for t in restored["trips"]
+                if t["id"] == from_sheet["id"])["assignment"] == from_sheet["assignment"]
+
+
+def test_unassign_still_refuses_a_trip_with_no_bus(client):
+    state = client.get("/api/state").json()
+    free = next(t for t in state["trips"] if not t["assignment"])
+    res = client.post("/api/unassign", json={"trip": free["id"]})
+    assert res.status_code == 409
+    assert "no assignment" in res.json()["detail"]
+
+
+def test_date_drag_writes_both_ends_as_one_action(client):
+    """A move preserves the span, so it can never create the inverted or
+    over-long row the contract refuses — but only if both dates land together.
+    One undo step has to take the whole gesture back."""
+    state = client.get("/api/state").json()
+    trip = next(t for t in state["trips"] if t["status"] != "Canceled")
+    start, end = trip["start"], trip["end"]
+    shifted = {"Start date": _plus(start, 3), "End date": _plus(end, 3)}
+
+    res = client.post(f"/api/trips/{trip['id']}/cells", json={"values": shifted})
+    assert res.status_code == 200, res.text
+    after = client.get("/api/state").json()
+    now = next(t for t in after["trips"] if t["id"] == trip["id"])
+    assert (now["start"], now["end"]) == (shifted["Start date"], shifted["End date"])
+    # Still operable: the span never changed, so no contract reason can appear.
+    assert not any(r["id"] == trip["id"] for r in after["non_operable"])
+
+    # The drag has to reach the workbook, and as a DATE — a date column spliced
+    # as text would still look right in the app and be wrong in Excel, where
+    # the sheet's own d-mmm-yy format has nothing to format.
+    import io
+    import openpyxl
+    ws = openpyxl.load_workbook(
+        io.BytesIO(client.get("/api/export.xlsx").content))["Capitals 2026"]
+    cols = {t: i + 1 for i, t in enumerate(after["columns"])}
+    row = int(trip["id"].split(":")[1])
+    for title in ("Start date", "End date"):
+        cell = ws.cell(row, cols[title])
+        assert cell.value.date().isoformat() == shifted[title]
+        assert cell.number_format == "d-mmm-yy"
+
+    assert client.post("/api/undo").status_code == 200
+    back = next(t for t in client.get("/api/state").json()["trips"]
+                if t["id"] == trip["id"])
+    assert (back["start"], back["end"]) == (start, end)
+
+
+def test_multi_cell_edit_refuses_an_unknown_column_before_writing(client):
+    state = client.get("/api/state").json()
+    trip = next(t for t in state["trips"] if t["status"] != "Canceled")
+    res = client.post(f"/api/trips/{trip['id']}/cells", json={"values": {
+        "Start date": _plus(trip["start"], 1), "Nonesuch": "x"}})
+    assert res.status_code == 422
+    now = next(t for t in client.get("/api/state").json()["trips"]
+               if t["id"] == trip["id"])
+    assert now["start"] == trip["start"], "a refused batch must write nothing"
+
+
+def _plus(iso, days):
+    from datetime import date, timedelta
+    return (date.fromisoformat(iso) + timedelta(days=days)).isoformat()

@@ -433,6 +433,34 @@ def set_cell(request: Request, trip_id: str, body: CellEdit) -> dict[str, Any]:
     return {"ok": True}
 
 
+class CellEdits(BaseModel):
+    values: dict[str, str]          # column title -> value
+
+
+@router.post("/trips/{trip_id}/cells")
+def set_cells(request: Request, trip_id: str, body: CellEdits) -> dict[str, Any]:
+    """Edit several cells of one row as one action.
+
+    The board's date drag moves Start date and End date together; see
+    Repo.set_cells for why that cannot be two /cell calls.
+    """
+    if not body.values:
+        raise HTTPException(422, "No cells to edit")
+    for column in body.values:
+        if column not in COLUMN_ORDER:
+            raise HTTPException(
+                422, f"{column!r} is not a column of the contract layout")
+    repo = _repo(request)
+    tid = _tid(trip_id)
+    what = " and ".join(sorted(body.values))
+    try:
+        with repo.undoable(f"edit {what} on {_where(repo, tid)}"):
+            repo.set_cells(tid, body.values)
+    except RepoError as e:
+        raise HTTPException(409, str(e)) from e
+    return {"ok": True}
+
+
 class StatusChange(BaseModel):
     status: str
 
@@ -500,6 +528,79 @@ def accept(request: Request, body: Accept) -> dict[str, Any]:
                 demand, body.company, body.unit,
                 _tid(body.supply) if body.supply else None,
             )
+    except RepoError as e:
+        raise HTTPException(409, str(e)) from e
+    return {"ok": True}
+
+
+def _drop_targets(
+    repo: Repo, tid: TripId,
+) -> tuple[list[engine.DropTarget], list[engine.DropRefusal]]:
+    """Where this trip may legally be dropped, per the engine, right now.
+
+    One function for both the question (/drop-targets, asked when the drag
+    starts) and the answer (/reassign, which re-asks before writing). The
+    client never tells the server which link to record — the same rule
+    _current_plan follows: a board that has been open for a while must not be
+    able to write a decision the engine no longer stands behind.
+    """
+    report, registry, _ = repo.load_state()
+    return engine.drop_targets(
+        report, registry, tid, repo.settings()["reposition"])
+
+
+@router.get("/drop-targets/{trip_id}")
+def drop_targets(request: Request, trip_id: str) -> dict[str, Any]:
+    targets, refused = _drop_targets(_repo(request), _tid(trip_id))
+    return {
+        "targets": [
+            {"company": t.company, "unit": t.unit, "supply": _sid(t.supply),
+             "gap_days": t.gap_days, "successor_gap": t.successor_gap,
+             "reposition": t.reposition, "chains": t.chains}
+            for t in targets
+        ],
+        # Refusals travel with the answer so the board can say WHY a row will
+        # not take the bar hovering over it, rather than only failing to light
+        # it up.
+        "refused": [
+            {"company": r.company, "unit": r.unit, "reason": r.reason}
+            for r in refused
+        ],
+    }
+
+
+class Reassign(BaseModel):
+    trip: str
+    company: str
+    unit: int | None = None
+
+
+@router.post("/reassign")
+def reassign(request: Request, body: Reassign) -> dict[str, Any]:
+    """Put a trip on a bus, whichever bus it was on before.
+
+    The supply link is derived here, not submitted: the drop says only where
+    the bar landed, and the engine says what that means.
+    """
+    repo = _repo(request)
+    tid = _tid(body.trip)
+    targets, refused = _drop_targets(repo, tid)
+    target = next((t for t in targets
+                   if t.company == body.company and t.unit == body.unit), None)
+    if target is None:
+        # Quote the engine's own reason when it has one: a board that has been
+        # open a while can offer a drop the state no longer allows, and "it
+        # moved on" is far less use than the trip now in the way.
+        why = next((r.reason for r in refused
+                    if r.company == body.company and r.unit == body.unit), None)
+        raise HTTPException(
+            409, f"{_bus(repo, body.company, body.unit)} cannot take "
+                 f"{_where(repo, tid)} — "
+                 + (why or "the board has moved on since the drag started"))
+    try:
+        with repo.undoable(
+                f"move {_where(repo, tid)} to {_bus(repo, body.company, body.unit)}"):
+            repo.reassign(tid, body.company, body.unit, target.supply)
     except RepoError as e:
         raise HTTPException(409, str(e)) from e
     return {"ok": True}

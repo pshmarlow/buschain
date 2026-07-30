@@ -454,6 +454,49 @@ td.cell input, td.cell select { width: 100%; min-width: 6rem; padding: 0.1rem 0.
 .bar.selected { box-shadow: 0 0 0 2px var(--accent); z-index: 1; }
 .bar.partner { box-shadow: 0 0 0 2px #7aa8f0; z-index: 1; }
 
+/* ---------- dragging a bar ---------- */
+
+/* grab, not pointer: the bar is still a click target (it opens the chain
+   panel), but the cursor has to advertise the drag or nobody discovers it. */
+.bar { cursor: grab; }
+.bar.dragging {
+  cursor: grabbing; z-index: 5; opacity: 0.85;
+  box-shadow: 0 3px 10px rgba(0, 0, 0, 0.3);
+  /* The drag reads the row under the POINTER (elementFromPoint), so the bar
+     following the pointer must not be what it finds. */
+  pointer-events: none;
+}
+/* A drag that started as a text selection selects half the board on the way
+   past; scoped to the active gesture so ordinary reading still selects. */
+#board.dragging-x, #board.dragging-y { user-select: none; }
+/* Where the bar may land. Deliberately a background wash on the whole row
+   rather than an outline: the question during a vertical drag is "which of
+   these fifteen rows can take it", and that is answered by scanning a column
+   of tinted bands, not by hunting for edges. */
+.board-row.drop-ok .row-canvas { background-color: rgba(31, 111, 235, 0.07); }
+.board-row.drop-ok .row-label { background: rgba(31, 111, 235, 0.10); }
+.board-row.drop-hover .row-canvas { background-color: rgba(31, 111, 235, 0.18); }
+.board-row.drop-hover .row-label {
+  background: rgba(31, 111, 235, 0.22); font-weight: 600;
+}
+/* Refused rows are marked only while hovered, not tinted throughout: fifteen
+   rows striped red would drown the handful that can actually take the trip,
+   and the reason travels in the note anyway. */
+.board-row.drop-bad .row-canvas { background-color: rgba(159, 28, 20, 0.07); }
+.board-row.drop-bad .row-label { background: rgba(159, 28, 20, 0.10); }
+
+/* The note follows the pointer, because during a drag that is the only place
+   the eye is. It says what the drop will do, in the same words the toast would
+   use afterwards. */
+#drag-note {
+  position: fixed; z-index: 50; pointer-events: none;
+  max-width: 24rem; padding: 0.3rem 0.5rem; border-radius: 6px;
+  font-size: 0.75rem; line-height: 1.35;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25);
+}
+#drag-note.ok { background: #10321f; color: #eaf6ee; }
+#drag-note.bad { background: #4a1512; color: #fbe6e4; }
+
 /* Accepted chain link: supply's arrival to demand's departure, spanning the
    idle days between them. */
 .connector { position: absolute; height: 0; border-top: 2px solid var(--accent); }
