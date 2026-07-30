@@ -148,6 +148,18 @@ Key decisions worth knowing before editing:
   unreachable; the window is what buys back.
 - **ER (column M) is read only to label** an already-detected integrity gap
   as `explicit_er`. It is never a matching input and never written.
+- **Pax is a hard constraint, not a note (rule 10).** The chartered coaches
+  seat `graph.CHARTERED_PAX` (49), so a trip stating any other party size can
+  only go to an ad hoc bus — every gate that hands a trip to a numbered unit
+  applies `numbered_unit_ok`, and the board refuses the drop by name. Two
+  choices inside it: a **blank** Pax passes (unstated is not "not 49" — paste
+  and manual entry produce blank rows constantly, and the other reading would
+  silently strip them out of the fleet's reach), and the rule governs what a
+  bus may **pick up**, not what it is already carrying, so an imported non-49
+  trip on a numbered unit stays supply and is *listed* as `pax_mismatch` rather
+  than refused. That finding names one trip, so it carries the same id in
+  `earlier` and `later`. Free on the reference workbook: all 16 of its non-49
+  rows are already ad hoc, so coverage stays at 113/190 with zero findings.
 - **Pasting rows is a codec, not a form.** `codecs/paste.py` takes tab-separated
   rows copied out of columns A-O and decodes them the way `xlsx_reader` decodes
   a day serial: the clipboard holds a *rendering* of the sheet, so `1-Apr-26`

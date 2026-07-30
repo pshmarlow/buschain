@@ -58,7 +58,10 @@ class Trip:
     end: date
     dep_city: str                       # canonical city code
     arr_city: str
-    pax: int | None                     # informational only
+    # Read for logic since rule 10: a stated Pax other than graph.CHARTERED_PAX
+    # bars every numbered unit, leaving the trip to an ad hoc bus. Blank still
+    # means "unstated", which the rule lets through.
+    pax: int | None
     assignment: Assignment | None       # None + status Confirmed/Pending => demand
     # The ER column is read ONLY to label integrity gaps as explicit ER (per
     # user decision) — never a matching input, never written back.
@@ -174,8 +177,11 @@ class IntegrityFinding:
     unit: int
     earlier: TripId
     later: TripId
+    # pax_mismatch names ONE trip (earlier == later): a non-49 booking sitting
+    # on a numbered unit, which only an imported sheet can produce — see
+    # checks.unit_integrity.
     kind: Literal["overlap", "gap_out_of_window", "city_mismatch",
-                  "explicit_er", "reposition"]
+                  "explicit_er", "reposition", "pax_mismatch"]
 
 
 @dataclass(frozen=True)

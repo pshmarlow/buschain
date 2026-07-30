@@ -3239,7 +3239,13 @@ function renderTimelines() {
          is dressed as a warning the reader has to go and fix. */
       el("span", { class: "badge " + (["explicit_er", "reposition"]
         .includes(f.kind) ? "system" : "warn") }, f.kind),
-      ` ${unitLabel(f.company, f.unit)}: ${tripLabel(f.earlier)} → ${tripLabel(f.later)}`));
+      /* Most findings are about a PAIR that will not chain; pax_mismatch is
+         about one trip sitting on a bus too small a party for it. The engine
+         sends the same id twice there rather than growing the shape, so the
+         arrow is dropped instead of pointing a row at itself. */
+      ` ${unitLabel(f.company, f.unit)}: ` + (f.earlier === f.later
+        ? tripLabel(f.later)
+        : `${tripLabel(f.earlier)} → ${tripLabel(f.later)}`)));
   }
 }
 

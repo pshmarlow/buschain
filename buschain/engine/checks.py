@@ -12,7 +12,7 @@ from ..model import (
     AcceptedLink, BrokenChainItem, FleetWarning, IntegrityFinding, Registry,
     Status, Trip, TripId,
 )
-from .graph import _pair_chainable
+from .graph import _pair_chainable, numbered_unit_ok
 
 
 def fleet_warnings(
@@ -80,6 +80,21 @@ def unit_integrity(
     findings: list[IntegrityFinding] = []
     for (company, unit), trips in sorted(unit_assignments.items()):
         ordered = sorted(trips, key=lambda t: (t.start, t.end, t.id))
+        # Rule 10, enumerated rather than refused — the same stance the rest of
+        # this module takes toward source data. graph.numbered_unit_ok stops the
+        # planner and the board from CREATING one of these, but an imported
+        # sheet may already carry a non-49 trip on a numbered bus, and the sheet
+        # says what it says. The reference workbook yields none.
+        #
+        # A capacity violation is a property of one trip, not of a pair, so both
+        # ids name that trip: the finding keeps the shared shape and the board's
+        # click-through (which navigates to `later`) still lands correctly.
+        for t in ordered:
+            if not numbered_unit_ok(t):
+                findings.append(IntegrityFinding(
+                    company=company, unit=unit,
+                    earlier=t.id, later=t.id, kind="pax_mismatch",
+                ))
         for earlier, later in zip(ordered, ordered[1:]):
             if later.start <= earlier.end:
                 kind = "overlap"

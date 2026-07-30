@@ -115,6 +115,19 @@ transitive (CPH–BGO is two short hops via OSL but is not itself short).
 `Y` + company X → only X's buses may serve; `N` + X → X never; blank →
 anyone. Hard filter, company-level.
 
+**Gate 2b — capacity (rule 10).** `numbered_unit_ok` (`graph.py`): the chartered
+coaches seat `CHARTERED_PAX` (49), so a demand trip stating any other `Pax`
+gets no edge to any numbered unit — it is ad hoc work. Applied by filtering the
+demand list once, since every supply in this graph is a numbered unit by
+definition. Blank `Pax` passes: the rule bites on a stated number that
+disagrees, not on a missing one, because paste and manual entry routinely
+produce rows with no `Pax` and reading blank as "not 49" would silently drop
+them out of the fleet's reach. The constant is a code literal for the same
+reason as the near-pair table — the sheet carries no seat counts, and one
+number true of the whole charter is not a configuration knob. Costs nothing on
+the reference workbook: its 16 non-49 rows are all already ad hoc, so coverage
+stays at 113/190 and the rule enumerates zero findings.
+
 **Gate 3 — the unit's whole timeline stays valid (rule 6).**
 `_unit_timeline_ok` (`graph.py:97`) simulates the accept: no overlap with any
 existing trip, no existing trip already sitting inside the gap, and if the unit
@@ -154,6 +167,7 @@ it too (every consecutive pair satisfies the rules *or is enumerated*):
 | Overlapping an existing trip on that unit | A gap wider than `floor + MAX_REST_DAYS` — the bus is simply parked |
 | A gap below `min_gap_days` on either side — the bus cannot be there | A city change with time to spare, needing no approved ER |
 | A company the trip's `Y`/`N` names (rule 3 is hard) | A successor the bus already could not reach before the insert |
+| A `Pax` other than 49 on a numbered unit (rule 10 is hard) | A non-49 trip already imported onto a numbered unit — listed as `pax_mismatch` |
 
 That relaxation is measured, not assumed: **34 of the reference workbook's 183
 consecutive pairs are already wider than the window**, and the integrity check
@@ -431,3 +445,4 @@ All *listed, never auto-fixed*.
 | 7 — canceled excluded, retained | `__init__.py:84` (inside `_split`) |
 | 8 — graph model, greedy + exact | `graph.py` (edges = the model), `suggest.py` + `plan.py` (greedy consumers), `solve.py` (exact consumer — same edges, solved optimally) |
 | 9 — human-in-the-loop ranking | `suggest.py` (engine never assigns; `plan` is provisional; only `repo.accept` writes) |
+| 10 — non-49 Pax is ad hoc only | `graph.py` (`CHARTERED_PAX`, `numbered_unit_ok`), applied `feasible_edges` + `insertion_verdict`, `reach.py`, `solve.py`; imported violations listed by `checks.unit_integrity` as `pax_mismatch` |

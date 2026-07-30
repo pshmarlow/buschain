@@ -15,7 +15,7 @@ non-operable with reasons and pass through untouched.
   B Comp must resolve to a registry company
 - `G Start date`, `H End date` — valid dates, start ≤ end
 - `I Departure`, `J Arrival` — canonical city codes (registry-validated)
-- `N Pax` — informational
+- `N Pax` — party size; read for logic by rule 10 (blank = unstated, unconstrained)
 - `P Company name` — empty (= needs a bus) | company (= ad hoc) | numbered unit
 **Passthrough columns** — never read for logic, preserved verbatim on export:
 `C Bus Preference`, `F P Notes`, `K Nationality`, `L OP`, `M Quoted rate`, `O ER`,
@@ -60,6 +60,13 @@ closed registry.
 9. **Human-in-the-loop:** ranked candidates (gap ascending), both directions — per free
    unit and per uncovered trip; a person accepts; acceptance writes the assignment.
    Nothing is ever auto-assigned.
+10. **Capacity (hard, like rule 3):** the chartered coaches seat 49, so a trip whose
+    `Pax` states any other number can only be given to an **ad hoc** bus — never to a
+    numbered unit. Blank `Pax` is unstated and unconstrained. Governs what a bus may
+    pick up, not what it may already be carrying: an imported non-49 trip on a numbered
+    unit is still supply, and is **listed** by the integrity check (`pax_mismatch`)
+    rather than refused. The reference workbook already obeys this — 16 of its 1527
+    operable rows carry a Pax other than 49, and all 16 are ad hoc.
 
 ## Interchange behavior
 Import an xlsx in the contract layout → operate on the operated columns → export the

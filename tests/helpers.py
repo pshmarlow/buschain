@@ -32,9 +32,13 @@ def mk_trip(
     status: Status = Status.CONFIRMED,
     company: str | None = None, unit: int | None = None,
     yn: str | None = None, constraint: str | None = None,
-    er: bool = False, row: int | None = None,
+    er: bool = False, row: int | None = None, pax: int | None = None,
 ) -> Trip:
-    """Days are offsets from BASE so chains read as small integers."""
+    """Days are offsets from BASE so chains read as small integers.
+
+    pax defaults to None — unstated, which rule 10 lets onto any bus — so a test
+    that is not about capacity never has to mention it.
+    """
     global _seq
     _seq += 1
     assignment = Assignment(company, unit) if company else None
@@ -43,7 +47,7 @@ def mk_trip(
         status=status, project=None,
         yn=yn, constraint_company=constraint,  # type: ignore[arg-type]
         start=BASE + timedelta(days=start), end=BASE + timedelta(days=end),
-        dep_city=dep, arr_city=arr, pax=None,
+        dep_city=dep, arr_city=arr, pax=pax,
         assignment=assignment, er_marked=er,
     )
 

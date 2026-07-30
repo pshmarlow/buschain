@@ -32,7 +32,7 @@ from collections import defaultdict
 from typing import Iterable
 
 from ..model import Trip, TripId
-from .graph import MAX_GAP_DAYS, MIN_GAP_DAYS
+from .graph import MAX_GAP_DAYS, MIN_GAP_DAYS, numbered_unit_ok
 
 
 def _company_ok(company: str, demand: Trip) -> bool:
@@ -52,7 +52,12 @@ def reachable_demands(
     """Uncovered trips some sequence of accepts could chain into."""
     by_departure: dict[str, list[Trip]] = defaultdict(list)
     for d in demand_trips:
-        by_departure[d.dep_city].append(d)
+        # Rule 10: this walk only ever hands trips to numbered units, so a trip
+        # no numbered unit may take is unreachable by construction — and saying
+        # so is the point, since "unreachable" is what tells the board this is
+        # an ad hoc job rather than a trip waiting on an earlier decision.
+        if numbered_unit_ok(d):
+            by_departure[d.dep_city].append(d)
 
     # trip -> companies that could be operating it at its arrival
     served: dict[TripId, set[str]] = defaultdict(set)

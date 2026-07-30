@@ -356,7 +356,38 @@
   some bus from their yard” — ranked last. That is rule 3's designed escape.
 </p>
 
-<h3>4.4 Rule 6 — one bus cannot be in two places</h3>
+<h3>4.4 Rule 10 — party size (the <em>Pax</em> column)</h3>
+<p>
+  Your chartered buses are <strong>49-seaters</strong>. So a trip whose
+  <em>Pax</em> says anything other than 49 — a party of 19, a party of 72 — is
+  not work those buses can take, and the app will only ever put it on an
+  <strong>ad hoc</strong> bus.
+</p>
+<p>
+  In practice: such a trip gets no chain suggestions, the planner and
+  <em>Optimize</em> leave it alone, the board shows it as out of reach, and
+  dragging it onto a numbered bus is refused with the reason spelled out
+  (<em>“the trip carries 19 pax, not 49 — only an ad hoc bus can take it”</em>).
+  Every company's ad hoc lane stays open, which is where the trip is meant to
+  go. The rule is not about whether the people would physically fit: 19 is
+  barred for the same reason 72 is.
+</p>
+<p>
+  <strong>An empty Pax cell is not a violation.</strong> Blank means unstated,
+  and an unstated party size constrains nothing — pasted and hand-entered rows
+  often have no Pax, and it would be wrong to quietly put them out of the
+  fleet's reach.
+</p>
+<p>
+  <strong>Rows that arrive already breaking it.</strong> The rule governs what a
+  bus may <em>pick up</em>, not what your sheet says it is already carrying. If
+  an imported row puts a 55-pax trip on <code>Ollex 1</code>, the app leaves it
+  alone, still treats that bus as available afterwards, and <em>lists</em> the
+  row in the integrity report as <code>pax_mismatch</code> for you to decide
+  about — the same treatment every other pre-existing problem gets.
+</p>
+
+<h3>4.5 Rule 6 — one bus cannot be in two places</h3>
 <p>
   Before proposing a link the app replays that bus's whole timeline: no overlap
   with an existing trip, no existing trip sitting inside the gap, and if the bus
@@ -372,14 +403,14 @@
   in place (chapters 5.2 and 5.3).
 </p>
 
-<h3>4.5 Empty runs only off the end of a chain</h3>
+<h3>4.6 Empty runs only off the end of a chain</h3>
 <p>
   A bus may be driven empty only from the <strong>last</strong> trip on its
   timeline. Mid-chain it would arrive in the wrong city for whatever comes
   after, stranding it.
 </p>
 
-<h3>4.6 One new link per bus per planning round</h3>
+<h3>4.7 One new link per bus per planning round</h3>
 <p>
   When the planner builds a chain, each bus takes at most one new link per pass,
   then everything is re-validated. This is why a plan can look conservative:
@@ -387,7 +418,7 @@
   sweep.
 </p>
 
-<h3>4.7 Canceled trips</h3>
+<h3>4.8 Canceled trips</h3>
 <p>
   Canceled trips never appear in matching, never count against a fleet, and
   never occupy a bus. They are kept for audit, they can be shown on the board
@@ -395,7 +426,7 @@
   downstream of it lands on the <strong>Worklist</strong>.
 </p>
 
-<h3>4.8 Pending trips are a risk, not a blocker</h3>
+<h3>4.9 Pending trips are a risk, not a blocker</h3>
 <p>
   A Pending trip can be chained from and onto like any other, but every
   suggestion tells you how many Pending trips it depends on
@@ -880,6 +911,9 @@
   <dd>Every consecutive pair on every bus, classified. Click one to jump to it
     on the board.
     <ul>
+      <li><code>pax_mismatch</code> — a trip for a party other than 49 sitting on
+        a numbered bus. The one finding about a single trip rather than a pair,
+        so it names one row; only an imported sheet can produce it (chapter 4.4).</li>
       <li><code>overlap</code> — the same bus on two trips at once. A real problem.</li>
       <li><code>gap_out_of_window</code> — too soon or too long a rest between two trips.</li>
       <li><code>city_mismatch</code> — the bus ends somewhere other than where the next trip starts, with nothing explaining it.</li>
@@ -1171,6 +1205,12 @@
   <dd>Reachability ignores contention — it answers “could a chain ever get
       here?”, not “is a bus free?”. The plan's number is the real one. The gap
       is a capacity shortfall, not a planning failure.</dd>
+
+  <dt>One trip gets no suggestions at all, and no bus will accept it.</dt>
+  <dd>Check its <em>Pax</em>. Anything other than 49 means only an ad hoc bus
+      may take it (chapter 4.4) — drag it onto a company's ad hoc lane. Failing
+      that, its <em>Bus Preference</em> may name a company whose buses are all
+      committed.</dd>
 
   <dt>A bus stops halfway across the board and never takes another trip.</dt>
   <dd>Hover its row label. It is <em>done</em>, <em>booked</em> or

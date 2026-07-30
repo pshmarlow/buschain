@@ -79,6 +79,32 @@ class Edge:
     reposition: bool = False
 
 
+# Rule 10: every chartered (numbered) bus is a 49-seater, so a booking for any
+# other party size is not work the fleet can take — that trip is hired in, which
+# in this sheet means a bare-company (ad hoc) assignment.
+#
+# A literal here rather than a Company field, for the same reason as the
+# city-pair table above: the source sheet carries no seat counts to derive it
+# from, and one number true of the whole charter is not a configuration knob.
+# The reference workbook already obeys this without exception — of 1527 operable
+# rows, 16 carry a Pax other than 49 (5, 16, 19, 21, 48, 55, 72) and all 16 are
+# ad hoc — so the rule enumerates zero findings there and removes zero edges.
+CHARTERED_PAX = 49
+
+
+def numbered_unit_ok(demand: Trip) -> bool:
+    """Rule 10: may a NUMBERED unit take this trip at all?
+
+    A blank Pax passes. The rule bites on a stated number that disagrees, not on
+    a missing one: paste and manual entry routinely produce rows with no Pax,
+    and reading blank as "not 49" would quietly drop them out of the fleet's
+    reach with nothing on screen to say why.
+
+    Ad hoc lanes never ask this — they are the answer to a False.
+    """
+    return demand.pax is None or demand.pax == CHARTERED_PAX
+
+
 def company_ok(company: str, demand: Trip) -> bool:
     """Rule 3, company-level: Y + X -> only X may serve; N + X -> X never.
 
@@ -231,6 +257,15 @@ def insertion_verdict(
             f"the trip names {'only' if demand.yn == 'Y' else 'anyone but'} "
             f"{demand.constraint_company} — a hard constraint (rule 3)")
 
+    # Hard like rule 3, and refused here for the same reason: the chartered
+    # coaches seat CHARTERED_PAX, so no numbered bus is a legal landing place at
+    # all. The company's ad hoc lane still lights up on the board — drop_targets
+    # gates those on rule 3 alone — so the gesture has somewhere to go.
+    if not numbered_unit_ok(demand):
+        return None, (
+            f"the trip carries {demand.pax} pax, not {CHARTERED_PAX} — only an "
+            f"ad hoc bus can take it (rule 10)")
+
     others = [t for t in unit_trips if t.id != demand.id]
     for t in others:
         if t.start <= demand.end and t.end >= demand.start:
@@ -299,7 +334,10 @@ def feasible_edges(
     contract every other caller reads, and adding empty runs to them silently
     would change what `reachable` and the integrity report mean.
     """
-    demands = list(demand_trips)
+    # Rule 10 filters the demand list once rather than inside the pair loop:
+    # every supply here is a numbered unit by definition, so a trip no numbered
+    # unit may take has no edge to any of them.
+    demands = [d for d in demand_trips if numbered_unit_ok(d)]
     edges: list[Edge] = []
     for s in supply_trips:
         assert s.assignment is not None and s.assignment.unit is not None

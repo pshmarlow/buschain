@@ -123,7 +123,13 @@ def _solve(demand_trips, unit_assignments, reposition, time_limit, t0) -> Solved
 
     # Canonical orders everywhere below: iteration order decides variable
     # order decides the LP file decides CBC's path — see module docstring.
-    demand = sorted(demand_trips, key=lambda t: (t.start, t.end, t.id))
+    # Rule 10 up front: every variable below puts a demand on a NUMBERED unit,
+    # so a trip only an ad hoc bus may take belongs in no column of the model.
+    # Dropping it here rather than at each of the three gates keeps the rule
+    # stated once, and keeps the certified replay from refusing what the ILP
+    # proposed — graph.feasible_edges applies the same rule.
+    demand = sorted((d for d in demand_trips if graph.numbered_unit_ok(d)),
+                    key=lambda t: (t.start, t.end, t.id))
     units = {
         key: sorted(trips, key=lambda t: (t.start, t.end, t.id))
         for key, trips in sorted(unit_assignments.items())
