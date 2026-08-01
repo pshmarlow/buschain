@@ -87,12 +87,13 @@ async function _refreshNow() {
       if (!live[key].has(id)) SELECTED[key].delete(id);
     }
   }
-  // Any change at all invalidates an open re-chain or optimize preview: both
-  // were computed against the state that just moved. Dropping them here
-  // rather than trying to patch them keeps the panels from ever showing a
-  // plan the server would no longer produce.
+  // Any change at all invalidates an open re-chain, optimize or reclaim
+  // preview: all were computed against the state that just moved. Dropping
+  // them here rather than trying to patch them keeps the panels from ever
+  // showing a plan the server would no longer produce.
   RECHAIN = null;
   OPTIMAL = null;
+  RECLAIM = null;
   renderAll();
 }
 
@@ -1696,6 +1697,118 @@ function renderRechain() {
     `Apply (${r.released.length} released, ${links} assigned)`));
   foot.append(el("button", { class: "btn small",
     onclick: () => { RECHAIN = null; renderRechain(); } }, "Discard"));
+  foot.append(el("span", { class: "hint" },
+    "Nothing is written until you apply. One undo step reverses all of it."));
+  box.append(foot);
+}
+
+/* ---------- rule 11: reclaim work from ad hoc buses ---------- */
+
+/* Same lifecycle as RECHAIN, and null'd by refresh for the same reason. */
+let RECLAIM = null;
+
+async function previewReclaim() {
+  try {
+    // Same settle-first rule as previewRechain.
+    if (REFRESH_PROMISE) await REFRESH_PROMISE.catch(() => {});
+    const seq = REFRESH_SEQ;
+    const preview = await api("/reclaim-adhoc");
+    if (seq !== REFRESH_SEQ) {
+      toast("The plan moved while the preview was computing — try again.", true);
+      return;
+    }
+    RECLAIM = preview;
+    renderReclaim();
+    showTab("suggestions");
+    $("#reclaim-panel").scrollIntoView({ block: "nearest" });
+  } catch (err) { toast(err.message, true); }
+}
+
+async function applyReclaim() {
+  await mutate("/reclaim-adhoc", {}, (res) =>
+    `Reclaimed ${res.reclaimed} from ad hoc, ${res.accepted} links assigned`
+    + (res.stayed_adhoc.length
+        ? `, ${res.stayed_adhoc.length} kept their hired bus` : ""));
+}
+
+function renderReclaim() {
+  const box = $("#reclaim-panel");
+  box.replaceChildren();
+  box.classList.toggle("hidden", !RECLAIM);
+  if (!RECLAIM) return;
+  const r = RECLAIM;
+  const links = chainLinkCount(r.plan.chains);
+
+  box.append(el("div", { class: "detail-head" },
+    el("strong", {}, "Reclaim trips from ad hoc"),
+    el("span", { class: "hint" },
+      ` · hires that can still be cancelled (${r.notice_days} days' notice, so `
+      + `starting ${r.cutoff} or later) · `
+      + (r.objective === "coverage" ? "most trips covered" : "fewest idle days")
+      + (r.reposition ? " · empty runs allowed" : " · same city only"))));
+
+  box.append(el("p", {},
+    `${plural(r.eligible.length, "ad hoc booking")} could still be cancelled. `
+    + `${r.reclaimed.length} of them get a chartered bus; `
+    + `the other ${r.stayed_adhoc.length} keep their hired bus — `
+    + "nothing is cancelled for those."));
+
+  /* The source-file carve-out, stated rather than left to be discovered. Every
+     other automation in this app refuses to touch a company name that arrived
+     on the spreadsheet; this one may, because an ad hoc booking is a purchase
+     and not a fact about which bus exists. Saying so here is half of what makes
+     that safe — the other half is that this button is the only way in. */
+  if (r.from_source.length) {
+    box.append(el("p", { class: "hint" },
+      `${r.from_source.length} of them were named in the spreadsheet. Cancelling `
+      + "a hire is a commercial decision, not an edit to what the sheet says a "
+      + "bus is — so this action may propose it, and only you can commit it."));
+  }
+
+  /* Not `stranded`, and the wording has to keep those apart: these trips have
+     no bus TODAY either. What they lose is a proposal on this tab. Worded as a
+     loss, a dispatcher reads it as damage and refuses a better plan. */
+  if (r.regressed.length) {
+    const list = el("p", { class: "reason" },
+      `${plural(r.regressed.length, "trip")} the current plan proposes would no `
+      + "longer be covered by this one — they have no bus today either, and the "
+      + "buses go to the reclaimed trips instead: ");
+    r.regressed.slice(0, 12).forEach((id, i) => {
+      if (i) list.append(", ");
+      list.append(el("button", { class: "linklike",
+        onclick: () => { showTab("timelines"); selectOnBoard(id); } },
+        tripLabel(id)));
+    });
+    if (r.regressed.length > 12) {
+      list.append(`, and ${r.regressed.length - 12} more`);
+    }
+    box.append(list);
+  }
+
+  // Why the eligible list is the size it is — the same job the re-chain
+  // panel's "Untouched" line does.
+  const frozen = [];
+  if (r.frozen_notice) {
+    frozen.push(`${r.frozen_notice} start within ${r.notice_days} days, so the `
+      + "hire stands");
+  }
+  if (r.frozen_pax) {
+    frozen.push(`${r.frozen_pax} carry a party other than 49 — only an ad hoc `
+      + "bus can take those (rule 10)");
+  }
+  if (r.frozen_locked) frozen.push(`${r.frozen_locked} are locked`);
+  if (frozen.length) box.append(el("p", { class: "hint" },
+    "Untouched: " + frozen.join("; ") + "."));
+
+  const foot = el("div", { class: "toolbar" });
+  /* Both numbers, because they differ and the gap surprises people: the write
+     is the whole replan, since a reclaimed trip is often fed by a hop onto an
+     ordinary uncovered trip. Every extra link is one "Accept the whole plan"
+     would have written anyway. */
+  foot.append(el("button", { class: "btn small primary", onclick: applyReclaim },
+    `Apply (${r.reclaimed.length} reclaimed, ${links} links written)`));
+  foot.append(el("button", { class: "btn small",
+    onclick: () => { RECLAIM = null; renderReclaim(); } }, "Discard"));
   foot.append(el("span", { class: "hint" },
     "Nothing is written until you apply. One undo step reverses all of it."));
   box.append(foot);
@@ -3536,6 +3649,7 @@ function renderAll() {
   renderPlanToggles();
   renderRechain();
   renderOptimal();
+  renderReclaim();
   renderPlanSummary();
   renderPlanChains();
   renderSuggestions();
@@ -3951,6 +4065,7 @@ $("#objective-group").addEventListener("click", (e) => {
 
 $("#rechain-btn").addEventListener("click", previewRechain);
 $("#optimize-btn").addEventListener("click", previewOptimal);
+$("#reclaim-btn").addEventListener("click", previewReclaim);
 
 $("#reposition-group").addEventListener("click", (e) => {
   if (e.target.dataset.reposition) {

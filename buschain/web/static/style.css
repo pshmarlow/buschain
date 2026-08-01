@@ -579,13 +579,16 @@ td.cell input, td.cell select { width: 100%; min-width: 6rem; padding: 0.1rem 0.
 }
 .btn.small.active { background: var(--accent); color: var(--accent-fg); border-color: var(--accent); }
 .zoom-group { display: flex; align-items: center; gap: 0.3rem; color: var(--muted); font-size: 0.8rem; }
-/* Re-chain preview: a card rather than a banner, because it is a proposal to
-   act on and it sits directly above the plan summary, which states what already
-   holds. The accent edge is the only thing distinguishing the two at a glance. */
-#rechain-panel { border-left: 3px solid var(--accent); }
-#rechain-panel .detail-head { display: flex; align-items: baseline; gap: 0.4rem; }
-#rechain-panel p { margin: 0.35rem 0; }
-#rechain-panel .toolbar { margin: 0.7rem 0 0; }
+/* Re-chain and reclaim previews: cards rather than banners, because each is a
+   proposal to act on and both sit directly above the plan summary, which states
+   what already holds. The accent edge is the only thing distinguishing the two
+   at a glance. Both take assignments back, which is why they share a look the
+   optimize panel does not. */
+#rechain-panel, #reclaim-panel { border-left: 3px solid var(--accent); }
+#rechain-panel .detail-head,
+#reclaim-panel .detail-head { display: flex; align-items: baseline; gap: 0.4rem; }
+#rechain-panel p, #reclaim-panel p { margin: 0.35rem 0; }
+#rechain-panel .toolbar, #reclaim-panel .toolbar { margin: 0.7rem 0 0; }
 
 #board-detail .detail-head { display: flex; align-items: center; gap: 0.4rem; margin-bottom: 0.6rem; }
 #board-detail .detail-head button { margin-left: auto; }

@@ -357,7 +357,39 @@ Key decisions worth knowing before editing:
   a bus. What must never happen is a bulk replan silently overwriting what the
   spreadsheet said, which is why the boundary lives in `system_assigned_ids`
   rather than in `repo.unassign`, where it used to sit as a side effect of
-  clearing-by-deleting-the-override.
+  clearing-by-deleting-the-override. A fourth boundary joined the three above
+  with rule 11: a re-chain releases **numbered** assignments only, because
+  releasing an ad hoc one cancels a purchase — see the next bullet.
+- **Reclaiming ad hoc work is the one automation allowed past the source-data
+  boundary (rule 11).** An ad hoc assignment used to be a dead end: it is
+  chain-invisible *and* not demand, so work given to a hired-in bus never came
+  back however much chartered capacity freed up later. `engine/adhoc.py` strips
+  the cancellable hires and hands the result to the ordinary `evaluate()`, and
+  it does **not** ask who wrote the company name — unlike every other automation
+  here. The justification is that an ad hoc booking is a cancellable *purchase*,
+  not a statement about which vehicle exists, and the alternative is a feature
+  that does nothing: all 82 currently-eligible hires in the reference workbook
+  came in on the sheet. Two things keep it narrow, and both are structural
+  rather than conventional — the only caller is a preview whose commit is a
+  human click, and `repo._require_adhoc` re-asks the question against the row it
+  is about to blank and refuses anything that is not a bare-company cell. Three
+  further conditions: never a locked trip; never a non-49 one (rule 10 means no
+  numbered unit could take it, so releasing it could only fail); and **never at
+  the cost of stranding**, since the trip already has a bus — a hire the replan
+  cannot replace simply keeps it, which is why the commit writes `reclaimed` and
+  not `eligible`. The 21-day notice binds the *button*, not the person: clearing
+  the Company cell in the Data tab or dragging the bar to Uncovered is
+  unaffected, exactly as with the re-chain boundary above.
+- **A reclaim is previewed for the same reason a re-chain is, and the number it
+  reports is not `stranded`.** Reclaims compete with genuinely uncovered trips in
+  one pool, ranked by an objective that counts links and cannot see that one of
+  them is already handled. So `regressed` names the trips the *current* plan
+  proposes and this one drops — they have no bus today either, and what they lose
+  is a proposal. Wording it as a loss would read as `stranded` and make a
+  dispatcher refuse a better plan. Measured (coverage objective, reference
+  workbook): 25 hires cancelled against 26 proposals dropped, which sounds
+  break-even and is not — the plan covers **113 → 122** trips, because a
+  reclaimed trip becomes supply and extends the chain past itself.
 - **A re-chain is previewed because coverage is not monotone under a release.**
   Releasing N assignments does not return N: the replan can spend a bus on a
   trip the old arrangement left uncovered and strand the one it took the bus

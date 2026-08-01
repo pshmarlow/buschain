@@ -1257,3 +1257,96 @@ def test_multi_cell_edit_refuses_an_unknown_column_before_writing(client):
 def _plus(iso, days):
     from datetime import date, timedelta
     return (date.fromisoformat(iso) + timedelta(days=days)).isoformat()
+
+
+# -- rule 11: reclaiming ad hoc work -----------------------------------------
+
+def test_reclaim_preview_accounts_for_every_live_adhoc_trip(client):
+    """eligible + the three frozen counts is the whole live ad hoc population,
+    which is what lets a panel show the split without inventing a fourth
+    category. The counts are mutually exclusive by refusal()'s test order."""
+    preview = client.get("/api/reclaim-adhoc").json()
+    state = client.get("/api/state").json()
+    live_adhoc = [t for t in state["trips"]
+                  if t["assignment"] and t["assignment"]["unit"] is None
+                  and t["status"] != "Canceled"]
+    assert len(preview["eligible"]) + preview["frozen_locked"] \
+        + preview["frozen_pax"] + preview["frozen_notice"] == len(live_adhoc)
+    # The workbook's 16 non-49 rows are all ad hoc, and rule 10 means no
+    # numbered bus could take them — so releasing them could never help.
+    assert preview["frozen_pax"] == 16
+    assert preview["cutoff"] == _plus(preview["as_of"], preview["notice_days"])
+
+
+def test_reclaim_never_offers_a_hire_inside_the_notice_window(client):
+    """Rule 11 is the whole point: a booking three weeks out or less stands."""
+    preview = client.get("/api/reclaim-adhoc").json()
+    by_id = {t["id"]: t for t in client.get("/api/state").json()["trips"]}
+    for tid in preview["eligible"]:
+        assert by_id[tid]["start"] >= preview["cutoff"]
+    assert preview["frozen_notice"] > 0, "the reference data has near-term hires"
+
+
+def test_reclaim_moves_an_imported_hire_onto_a_chartered_bus(client):
+    """The carve-out, exercised: every eligible hire in this workbook came in on
+    the spreadsheet, so if source-written names were off limits the feature
+    would do nothing at all."""
+    preview = client.get("/api/reclaim-adhoc").json()
+    assert preview["reclaimed"], "the reference data should reclaim something"
+    assert set(preview["from_source"]) == set(preview["eligible"])
+
+    before = {t["id"]: t["assignment"]
+              for t in client.get("/api/state").json()["trips"]}
+    for tid in preview["reclaimed"]:
+        assert before[tid]["unit"] is None          # a hire before
+
+    res = client.post("/api/reclaim-adhoc", json={})
+    assert res.status_code == 200, res.text
+    assert res.json()["reclaimed"] == len(preview["reclaimed"])
+
+    after = {t["id"]: t["assignment"]
+             for t in client.get("/api/state").json()["trips"]}
+    for tid in preview["reclaimed"]:
+        assert after[tid]["unit"] is not None       # a chartered bus after
+
+
+def test_reclaim_leaves_the_hires_it_cannot_replace(client):
+    """The never-strand guarantee end to end. A trip the replan could not cover
+    keeps the bus it already had — this action can make nothing worse."""
+    preview = client.get("/api/reclaim-adhoc").json()
+    assert preview["stayed_adhoc"]
+    client.post("/api/reclaim-adhoc", json={})
+
+    after = {t["id"]: t["assignment"]
+             for t in client.get("/api/state").json()["trips"]}
+    for tid in preview["stayed_adhoc"]:
+        assert after[tid] is not None and after[tid]["unit"] is None
+
+
+def test_reclaim_apply_is_one_undo_step(client):
+    """Reversed as a unit, including the imported company names it blanked —
+    the safety net the source-data carve-out leans on."""
+    before = {t["id"]: t["assignment"]
+              for t in client.get("/api/state").json()["trips"]}
+    assert client.post("/api/reclaim-adhoc", json={}).status_code == 200
+    assert {t["id"]: t["assignment"]
+            for t in client.get("/api/state").json()["trips"]} != before
+
+    client.post("/api/undo")
+    restored = {t["id"]: t["assignment"]
+                for t in client.get("/api/state").json()["trips"]}
+    assert restored == before
+
+
+def test_reclaim_refuses_to_cancel_a_numbered_assignment(client):
+    """_require_adhoc is a gate on SHAPE, not on the caller's honesty: the store
+    re-asks the question against the row it is about to blank."""
+    from buschain.store.repo import RepoError
+    repo = client.app.state.repo
+    numbered = next(t for t in client.get("/api/state").json()["trips"]
+                    if t["assignment"] and t["assignment"]["unit"] is not None)
+    tid = repo.row_labels() and next(
+        t.id for t in repo.load_state()[0].trips
+        if f"{t.id.origin}:{t.id.key}" == numbered["id"])
+    with pytest.raises(RepoError, match="bare-company"):
+        repo.reclaim_adhoc({tid}, [(tid, "ollex", 1, None)])

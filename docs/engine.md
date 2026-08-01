@@ -382,7 +382,7 @@ assignments had never been made and hands that to the ordinary `evaluate()`.
 One planner, one rule set — a second "replanner" would be a second place for
 the rules to drift.
 
-Three release boundaries, none negotiable:
+Four release boundaries, none negotiable:
 
 1. **Only app-written assignments** (`system_assigned`). A company name that
    arrived on the spreadsheet is source data; re-chain must not become the back
@@ -390,6 +390,13 @@ Three release boundaries, none negotiable:
 2. **Only trips that haven't started** (`start > as_of`). A bus already
    driving can't be re-decided.
 3. **Locked trips are exempt** on top of both.
+4. **Only numbered assignments.** An ad hoc hire is §9's business. Releasing one
+   here was a latent bug: `plan.chains` hold numbered units only, so a released
+   hire could never be re-placed and was *guaranteed* to strand — turning a
+   served trip into an uncovered one, with no notice check. It moved no measured
+   number (accepting a plan only ever writes numbered assignments, so the
+   reference data has zero app-written ad hoc rows and the figures below are
+   unchanged), but the path existed.
 
 Accepted links touching a released trip are dropped in both directions
 (`rechain.py:80`): the link *into* it dies with the assignment; the link *out*
@@ -405,7 +412,67 @@ why only 60 of 448 future trips were even in play. `commit_links`
 (`rechain.py:99`) emits writes in chain order so the store's own
 "supply-must-be-assigned-first" check passes naturally.
 
-## 9. Safety nets (`checks.py`, `deps.py`)
+## 9. Reclaiming ad hoc trips (`adhoc.py`, rule 11)
+
+An ad hoc assignment is chain-invisible *and* not demand — `_split` reads any
+assigned trip as covered — so before this it was a **dead end**: work given to a
+hired-in bus could never come back, however much chartered capacity freed up
+later. `adhoc.build` (`buschain/engine/adhoc.py`) is the move that undoes it,
+and like §8 it plans nothing: it strips the eligible hires and hands the result
+to the ordinary `evaluate()`.
+
+**Eligibility** (`refusal`, tested in this order so the counters a UI shows are
+mutually exclusive): must be a bare-company assignment; not canceled; not
+locked; `graph.numbered_unit_ok` — rule 10 applied as a *pointlessness* test,
+since a non-49 trip gets no edge to any numbered unit and releasing it could
+only ever produce a `stayed_adhoc`; and finally
+`(start - as_of).days >= ADHOC_CANCEL_NOTICE_DAYS` (21).
+
+That last one is the **first now-to-trip measurement in the engine** —
+everything else is trip-to-trip, and `as_of` had until now been a binary
+past/future horizon. It deliberately does *not* sit beside `CHARTERED_PAX` and
+`MIN_GAP_DAYS` in `graph.py`: those are timeless facts about a bus and two
+trips, and every function there is a pure predicate with no notion of "now".
+Put a now-relative constant in the one module that never receives `as_of` and it
+will eventually be applied to a trip-to-trip gap, where it means something else.
+It also **subsumes** §8's `start > as_of` boundary (21 ≥ 1), which is why
+`refusal` does not repeat it.
+
+**Three things this action does differently from a re-chain:**
+
+- **It never strands.** A released assignment leaves a trip with no bus; an ad
+  hoc trip already *has* one. So the commit writes only `reclaimed`, and
+  `stayed_adhoc` keeps its hire untouched. `repo.reclaim_adhoc` interleaves the
+  clear with the accept for exactly this reason — a pre-clear loop over the
+  eligible set (which is what `repo.rechain` does, correctly, for its own case)
+  would be the bug.
+- **It crosses the source-data boundary, on purpose.** Everywhere else
+  automation refuses to touch a company name that arrived on the spreadsheet
+  (`system_assigned_ids`). `releasable()` has no such parameter: an ad hoc
+  booking is a cancellable purchase, not a statement about which vehicle exists.
+  On the reference workbook this is the difference between the feature working
+  and doing nothing — **all 82 currently-eligible hires came in on the sheet.**
+  Two things keep it narrow: the only caller is a preview whose commit is a
+  human click, and `repo._require_adhoc` re-asks the question against the row
+  about to be written and refuses anything that is not a bare-company cell. The
+  preview reports `from_source` so the crossing is visible rather than silent.
+- **Reclaims compete with genuinely uncovered work in one pool**, ranked by the
+  ordinary objective — which counts links and cannot see that one trip is
+  already handled and the other is not. Deliberately not fixed by bolting a
+  tiebreak onto `plan.py` (one planner, one rule set); `regressed` is the
+  alternative — the trips the *current* plan proposes and this one drops. They
+  are **not** stranded and the UI must not word them as such: they have no bus
+  today either, and what they lose is a proposal.
+
+Measured on the reference workbook (fresh import, 1527 operable rows, 478 live
+ad hoc trips, `as_of` = 2026-08-01): 82 eligible, 380 frozen by the notice
+window, 16 by rule 10, 0 locked. Under the coverage objective 25 hires are
+cancelled and 26 proposals dropped — which sounds break-even and is not: the
+plan covers **113 → 122** trips, because a reclaimed trip becomes *supply* and
+extends the chain past itself. Under the idle objective, 21 reclaimed, 29
+dropped, 109 → 112.
+
+## 10. Safety nets (`checks.py`, `deps.py`)
 
 All *listed, never auto-fixed*.
 
@@ -432,7 +499,7 @@ All *listed, never auto-fixed*.
   cancellation would break the plan — so the human sees the risk *before*
   accepting.
 
-## 10. Rule-to-code map
+## 11. Rule-to-code map
 
 | Brief rule | Where |
 |---|---|
@@ -446,3 +513,4 @@ All *listed, never auto-fixed*.
 | 8 — graph model, greedy + exact | `graph.py` (edges = the model), `suggest.py` + `plan.py` (greedy consumers), `solve.py` (exact consumer — same edges, solved optimally) |
 | 9 — human-in-the-loop ranking | `suggest.py` (engine never assigns; `plan` is provisional; only `repo.accept` writes) |
 | 10 — non-49 Pax is ad hoc only | `graph.py` (`CHARTERED_PAX`, `numbered_unit_ok`), applied `feasible_edges` + `insertion_verdict`, `reach.py`, `solve.py`; imported violations listed by `checks.unit_integrity` as `pax_mismatch` |
+| 11 — ad hoc hires are cancellable at 21 days | `adhoc.py` (`ADHOC_CANCEL_NOTICE_DAYS`, `refusal`/`releasable`, `build`), committed by `repo.reclaim_adhoc` behind `_require_adhoc`; `rechain.py` deliberately leaves ad hoc alone |

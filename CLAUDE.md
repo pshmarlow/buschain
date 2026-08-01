@@ -32,7 +32,7 @@ it.
 
 A deterministic bus-trip chaining planner for a single human dispatcher:
 import an xlsx in the "Capitals" layout, chain buses onto uncovered trips
-under rules 1–9 of `bus-chaining-build-brief.md`, export the same xlsx with
+under rules 1–11 of `bus-chaining-build-brief.md`, export the same xlsx with
 only the operated cells changed.
 
 Read before editing: `docs/engine.md` (the maintained deep-dive on the

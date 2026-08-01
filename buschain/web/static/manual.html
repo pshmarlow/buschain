@@ -433,6 +433,22 @@
   (<em>“depends on 3 Pending trips”</em> — hover it for the list). If one of
   them cancels, the chain below it breaks and appears on the Worklist.
 </p>
+
+<h3>4.10 Rule 11 — a hired bus can be sent away, up to three weeks out</h3>
+<p>
+  A bare company name is a <em>booking</em>, not a vehicle: you paid someone to
+  cover that trip. Such a booking can be cancelled up to <strong>21 days</strong>
+  before the trip starts — after that it stands, whatever else the fleet could
+  do. This is the only rule in the app measured from today rather than between
+  two trips.
+</p>
+<p>
+  What it buys you: an ad hoc trip is no longer a dead end. If one of your own
+  coaches later comes free in the right city at the right time, the trip can be
+  moved onto it and the hire called off — see
+  <a href="#m6">6.7 Reclaim from ad hoc…</a>. The rule binds that button only;
+  you can still clear a Company cell by hand whenever you like.
+</p>
 </section>
 
 <!-- ─────────────────────────────────────────────────────────────────── -->
@@ -465,7 +481,8 @@
   <tr><td>Start date, End date</td><td><strong>Required.</strong> Real dates, start ≤ end, and no more than <strong>60 days apart</strong>. Text that is not a date fails the row — it is never repaired or guessed. The 60-day rule catches typo'd years: real trips here run 0–11 days, so a row spanning a year is a wrong digit, not a long charter. Nothing is corrected — the row is listed with its span and you fix the date.</td></tr>
   <tr><td>Departure, Arrival</td><td><strong>Required.</strong> Must resolve to a registry city code.</td></tr>
   <tr><td>Company name</td><td>If filled, must resolve to a registry company or one of its numbered units.</td></tr>
-  <tr><td>Pax</td><td>Informational. Never fails a row.</td></tr>
+  <tr><td>Pax</td><td>Never fails a row, but read by rule 10 — see 4.4. Blank is
+      fine (unstated).</td></tr>
   <tr><td>ER</td><td>Read only to <em>label</em> an empty run that is already visible in the data. Never used for matching, never written by the app. <code>n/a</code>, <code>no</code>, <code>-</code> and blank all mean “no ER”.</td></tr>
   <tr><td>P Notes, Nationality, OP, Quoted rate, C Notes</td><td>Passthrough. Never read for logic, preserved exactly. Nationality and OP get a dropdown from the registry purely so spellings stay tidy.</td></tr>
 </table>
@@ -677,13 +694,16 @@
   assignments the app made and rebuilds them from scratch under the current
   mode, objective and empty-run setting.
 </p>
-<p>Three boundaries decide what may be released, and none is negotiable:</p>
+<p>Four boundaries decide what may be released, and none is negotiable:</p>
 <ol>
   <li>Only assignments <strong>this app wrote</strong> into a cell that was blank
       on import. A company name that came from the spreadsheet is source data —
       change it on the Data tab or in Excel.</li>
   <li>Only trips that have <strong>not started yet</strong>.</li>
   <li>Never a <strong>locked</strong> trip.</li>
+  <li>Only <strong>numbered</strong> buses. Sending a hired-in (ad hoc) bus away
+      is a cancellation, not a rearrangement — that is <em>Reclaim from ad
+      hoc…</em> below.</li>
 </ol>
 <p>
   The panel states how many were frozen by each rule, so “only 60 of 448 future
@@ -701,7 +721,48 @@
 </p>
 <p>Nothing is written until you press Apply, and applying is a single undo step.</p>
 
-<h3>6.7 Optimize coverage… — the exact solver</h3>
+<h3>6.7 Reclaim from ad hoc… — take work back off hired buses</h3>
+<p>
+  A bare company name (<em>Ollex</em> rather than <em>Ollex 1</em>) means a bus
+  hired in for that one trip. Such a trip is covered, so the planner leaves it
+  alone forever — even when one of your own coaches later turns out to be free
+  and standing in the right city. <strong>Reclaim from ad hoc</strong> is the
+  button that looks for exactly those.
+</p>
+<p>
+  A hire can be sent away up to <strong>21 days</strong> before the trip starts;
+  inside that window it stands, and the panel says how many were frozen for that
+  reason. Two more are never offered: a <strong>locked</strong> trip, and one
+  whose <em>Pax</em> is not 49 — rule 10 means no chartered coach could take it,
+  so cancelling the hire could only leave it worse off.
+</p>
+<p>
+  <strong>It can never leave a trip without a bus.</strong> A hire is cancelled
+  only when a chartered coach is being written in its place; every other
+  eligible trip keeps the bus it already had, and the panel says how many. That
+  is the difference from a re-chain, which can strand a trip.
+</p>
+<p class="manual-warn">
+  <strong>The one place the app may overwrite the spreadsheet.</strong> This
+  action will cancel a hire the sheet itself named — everywhere else, a company
+  name that came in on the file is left alone. The reasoning: a bare company
+  name records that somebody <em>booked</em> a bus, and a booking inside its
+  notice period can be called off. It is a proposal either way — nothing is
+  written until you press Apply, and the panel tells you how many of the hires
+  came from the spreadsheet. The deadline binds this button, not you: you can
+  still clear the Company cell on the Data tab, or drag the bar to the Uncovered
+  lane, at any time.
+</p>
+<p>
+  The panel also names the trips the <em>current</em> plan proposes and this one
+  does not. Those are not losses — they have no bus today either, and the buses
+  went to the reclaimed trips instead. On the reference data the reclaim covers
+  more overall (113 → 122 trips), because a reclaimed trip becomes a starting
+  point for the next link. Applying is a single undo step, which puts every
+  cancelled hire back exactly as it was.
+</p>
+
+<h3>6.8 Optimize coverage… — the exact solver</h3>
 <p>
   The ordinary plan is built greedily, one best-looking link at a time.
   <strong>Optimize coverage</strong> hands the same rules to an exact solver
@@ -727,7 +788,7 @@
   works unchanged.
 </p>
 
-<h3>6.8 Single-hop candidates</h3>
+<h3>6.9 Single-hop candidates</h3>
 <p>
   The collapsed section at the bottom lists <em>only the next link</em>,
   ungrouped, in either direction: per uncovered trip (“who could take this?”) or

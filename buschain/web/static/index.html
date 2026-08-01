@@ -164,10 +164,18 @@ settings on the left. Shows what it would do before writing anything.">Re-chain 
       <button class="btn small" id="optimize-btn"
               title="Solve for the maximum number of coverable trips over the same
 rules the planner uses (takes a few seconds). Shows the result before writing anything.">Optimize coverage…</button>
+      <!-- Rule 11. The other control that takes assignments back, so it sits
+           beside re-chain — but it cancels a HIRE rather than rearranging the
+           charter, which is why it is its own button and not a re-chain mode. -->
+      <button class="btn small" id="reclaim-btn"
+              title="Move work off hired-in (ad hoc) buses onto chartered ones, where the
+booking can still be cancelled — 3 weeks' notice. Shows what it would do before writing
+anything, and never cancels a hire it cannot replace.">Reclaim from ad hoc…</button>
       <button class="btn small undo-btn" disabled>↶ Nothing to undo</button>
     </div>
     <div id="rechain-panel" class="card hidden"></div>
     <div id="optimal-panel" class="card hidden"></div>
+    <div id="reclaim-panel" class="card hidden"></div>
     <div id="plan-summary" class="banner"></div>
     <div id="plan-chains"></div>
 

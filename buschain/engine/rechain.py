@@ -5,7 +5,7 @@ have none, and a committed assignment is immovable by construction (see
 plan.py's module docstring). This is the one place that takes an assignment
 BACK, so a fleet can be rearranged rather than only extended.
 
-Three boundaries make that safe, and none of them is negotiable:
+Four boundaries make that safe, and none of them is negotiable:
 
 * Only assignments this app wrote are released. A company name that arrived on
   the spreadsheet is source data — repo.unassign already refuses to clear one,
@@ -13,6 +13,9 @@ Three boundaries make that safe, and none of them is negotiable:
 * Only trips that have not started yet. A bus already driving cannot be
   re-decided, whatever the plan would prefer.
 * Locked trips are exempt on top of both.
+* Only NUMBERED assignments. Ad hoc hires are engine/adhoc.py's business — see
+  the comment on future_assigned. The two release sets are disjoint by
+  construction, and test_rechain.py pins that.
 
 Nothing here writes, and nothing here plans: it restates the world as if the
 released assignments had never been made and hands that to the ordinary
@@ -54,9 +57,18 @@ def build(
     system_assigned: trips whose assignment came from this app rather than the
     source file (repo.system_assigned_ids).
     """
+    # Numbered assignments only. Releasing one gives a bus back to the pot and
+    # the worst case is a trip back on the worklist. Releasing an ad hoc one
+    # CANCELS A PURCHASE, which has a deadline (rule 11) and must never end with
+    # the trip on no bus at all — two rules this function does not implement and
+    # should not. engine/adhoc.py owns them, and its result keeps a trip's hire
+    # when the replan cannot re-place it. Without this line an app-written ad
+    # hoc trip was released and then guaranteed to strand, since plan.chains
+    # only ever contain numbered units.
     future_assigned = [
         t for t in report.trips
         if t.assignment is not None
+        and t.assignment.unit is not None
         and t.status is not Status.CANCELED
         and t.start > as_of
     ]

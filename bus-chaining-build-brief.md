@@ -35,7 +35,8 @@ closed registry.
   Pending = at-risk (may cancel).
 - **Numbered unit** (`Ollex 1`) = physical vehicle, chainable. **Bare company** (`Ollex`)
   = ad hoc — "some bus from this company": a legitimate assignment that is
-  chain-invisible (generates no supply; exempt from per-unit overlap rules).
+  chain-invisible (generates no supply; exempt from per-unit overlap rules), and a
+  *cancellable purchase* rather than a fact about a vehicle — see rule 11.
 - **Supply:** arrivals of assigned numbered-unit trips.
 
 ## Chaining rules (derived from the reference data, validated there)
@@ -67,6 +68,14 @@ closed registry.
     unit is still supply, and is **listed** by the integrity check (`pax_mismatch`)
     rather than refused. The reference workbook already obeys this — 16 of its 1527
     operable rows carry a Pax other than 49, and all 16 are ad hoc.
+11. **Ad hoc cancellation (commercial, not a chaining rule):** a hired-in bus can be
+    sent away up to **21 days** before the trip starts; inside that window the hire
+    stands. So an ad hoc trip is not a dead end: outside the window it may be moved
+    onto a chartered unit, subject to rules 1–3 and 10 like any other demand. Three
+    conditions on the move, each for its own reason — never a locked trip; never a
+    non-49 trip (rule 10 means no numbered unit could take it anyway); and **never at
+    the cost of leaving the trip with no bus**, since it already has one. A
+    preview-then-commit action, never automatic (rule 9 still holds).
 
 ## Interchange behavior
 Import an xlsx in the contract layout → operate on the operated columns → export the

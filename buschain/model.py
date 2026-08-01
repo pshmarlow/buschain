@@ -283,3 +283,42 @@ class RechainResult:
     # decided in exactly one place (repo.system_assigned_ids) and stays there.
     frozen_source: int = 0
     frozen_locked: int = 0
+
+
+@dataclass(frozen=True)
+class AdhocReclaimResult:
+    """A proposed move of ad hoc work onto chartered buses — derived state.
+
+    `engine` was computed as if every trip in `eligible` were unassigned, so its
+    plan is what the fleet would do if those hires were cancelled. Nothing is
+    written until someone commits it.
+
+    The asymmetry with RechainResult is the point: a released assignment leaves
+    a trip with no bus, but an ad hoc trip already HAS one. So the commit writes
+    only `reclaimed`, and `stayed_adhoc` keeps its hire — this action cannot
+    strand anything, which is why there is no field for it.
+    """
+    as_of: date
+    # Carried rather than let the client hardcode 21, for the same reason
+    # graph.window_rules() is served to the browser: the engine owns the number.
+    notice_days: int
+    eligible: tuple[TripId, ...]        # ad hoc hires that could still be cancelled
+    reclaimed: tuple[TripId, ...]       # eligible trips the replan puts on a numbered bus
+    stayed_adhoc: tuple[TripId, ...]    # eligible, uncovered — keep their hire, untouched
+    # Trips the CURRENT plan proposes and this one does not. NOT stranded and not
+    # a loss of a bus: they have none today either, and what they lose is a
+    # proposal. Named `regressed` because "lost their bus" reads as `stranded`,
+    # and a dispatcher who reads it that way will refuse a strictly better plan.
+    regressed: tuple[TripId, ...]
+    # Eligible trips whose company name came from the spreadsheet. This action is
+    # deliberately allowed to cancel those (an ad hoc booking is a purchase, not
+    # a fact about which vehicle exists) — so the carve-out is surfaced here
+    # rather than left silent. Filled by the web layer: provenance is a store
+    # concept and the engine stays ignorant of it.
+    from_source: tuple[TripId, ...]
+    engine: EngineResult
+    # Live ad hoc trips the action will not touch, counted so a panel can say
+    # why. Mutually exclusive by construction — see adhoc.refusal's test order.
+    frozen_locked: int = 0
+    frozen_pax: int = 0                 # not 49: no numbered unit could take them (rule 10)
+    frozen_notice: int = 0              # inside the cancellation window (rule 11)

@@ -1,7 +1,8 @@
 """JSON API. TripIds travel as 'origin:key' strings (e.g. 'sheet:123')."""
 from __future__ import annotations
 
-from datetime import date
+import dataclasses
+from datetime import date, timedelta
 from typing import Any, Sequence
 
 from fastapi import APIRouter, HTTPException, Request, Response, UploadFile
@@ -10,10 +11,10 @@ from pydantic import BaseModel
 from .. import engine
 from ..codecs import csv_codec, paste, seed, xlsx_reader, xlsx_writer
 from ..codecs.types import ALL_COLUMNS, COLUMN_ORDER
-from ..engine import rechain
+from ..engine import adhoc, rechain
 from ..model import (
-    EngineResult, Plan, ProposedChain, RechainResult, Status, Suggestion, Trip,
-    TripId,
+    AdhocReclaimResult, EngineResult, Plan, ProposedChain, RechainResult,
+    Status, Suggestion, Trip, TripId,
 )
 from ..store.repo import Repo, RepoError
 
@@ -775,6 +776,96 @@ def rechain_apply(request: Request) -> dict[str, Any]:
         raise HTTPException(409, str(e)) from e
     return {"ok": True, "released": len(result.released), "accepted": len(links),
             "stranded": [_rid(t) for t in result.stranded]}
+
+
+def _reclaim(repo: Repo, settings: dict[str, Any]) -> AdhocReclaimResult:
+    """Recompute the ad hoc reclaim from committed state.
+
+    today's date enters here and nowhere deeper, as in _rechain — rule 11 is
+    measured from it, so the engine takes it as an argument and stays a pure
+    function of its inputs.
+
+    A preview held across midnight commits with one fewer eligible trip, and
+    that is fine rather than a bug to fix: the POST recomputes, so a trip that
+    has fallen inside the notice window simply is not in the links. Do not
+    "solve" it by letting the client submit an as_of — that would let a stale
+    browser cancel a hire the deadline has already closed.
+    """
+    report, registry, accepted = repo.load_state()
+    result = adhoc.build(
+        report, registry, accepted,
+        locked=repo.locked_ids(),
+        as_of=date.today(),
+        objective=settings["objective"],
+        reposition=settings["reposition"],
+    )
+    # Provenance is a store concept, so the engine does not ask for it — but the
+    # panel must be able to say how many of these hires the spreadsheet named,
+    # because that is the boundary this action is allowed to cross.
+    system = repo.system_assigned_ids()
+    return dataclasses.replace(result, from_source=tuple(
+        t for t in result.eligible if t not in system))
+
+
+def _reclaim_json(result: AdhocReclaimResult,
+                  settings: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "as_of": result.as_of.isoformat(),
+        "notice_days": result.notice_days,
+        # Served rather than computed in JS, same rule as graph.window_rules():
+        # the deadline is the engine's number and the browser must not re-derive
+        # it from a constant of its own.
+        "cutoff": (result.as_of + timedelta(days=result.notice_days)).isoformat(),
+        "objective": settings["objective"],
+        "reposition": settings["reposition"],
+        "eligible": [_rid(t) for t in result.eligible],
+        "reclaimed": [_rid(t) for t in result.reclaimed],
+        "stayed_adhoc": [_rid(t) for t in result.stayed_adhoc],
+        "regressed": [_rid(t) for t in result.regressed],
+        "from_source": [_rid(t) for t in result.from_source],
+        "frozen_locked": result.frozen_locked,
+        "frozen_pax": result.frozen_pax,
+        "frozen_notice": result.frozen_notice,
+        "plan": _plan_json(result.engine.plan),
+    }
+
+
+@router.get("/reclaim-adhoc")
+def reclaim_preview(request: Request) -> dict[str, Any]:
+    """What moving cancellable ad hoc work onto the charter would do. Writes
+    nothing."""
+    repo = _repo(request)
+    settings = repo.settings()
+    return _reclaim_json(_reclaim(repo, settings), settings)
+
+
+@router.post("/reclaim-adhoc")
+def reclaim_apply(request: Request) -> dict[str, Any]:
+    """Cancel the hires the replan can replace, and write the replan.
+
+    Recomputed here rather than taken from the request, for the same reason as
+    /rechain: the client sends no links, so a stale preview cannot write a plan
+    the engine has since abandoned.
+    """
+    repo = _repo(request)
+    result = _reclaim(repo, repo.settings())
+    links = adhoc.commit_links(result)
+    if not result.reclaimed:
+        raise HTTPException(409, "Nothing to reclaim — no cancellable ad hoc trip "
+                                 "can be moved onto a chartered bus")
+    try:
+        # One undo entry for the whole move. The release set is `reclaimed`, NOT
+        # `eligible` — that identity is the guarantee that a hire is only ever
+        # cancelled when a bus is being written in its place.
+        with repo.undoable(
+                f"reclaim {len(result.reclaimed)} from ad hoc, "
+                f"{len(links)} assigned"):
+            repo.reclaim_adhoc(set(result.reclaimed), links)
+    except RepoError as e:
+        raise HTTPException(409, str(e)) from e
+    return {"ok": True, "reclaimed": len(result.reclaimed), "accepted": len(links),
+            "stayed_adhoc": [_rid(t) for t in result.stayed_adhoc],
+            "regressed": [_rid(t) for t in result.regressed]}
 
 
 class Settings(BaseModel):

@@ -16,7 +16,7 @@ import threading
 import zipfile
 from contextlib import contextmanager
 from datetime import date, datetime
-from typing import Any, Iterator, Mapping, Sequence
+from typing import AbstractSet, Any, Iterator, Mapping, Sequence
 
 from .. import contract, normalize
 from ..codecs import seed
@@ -1192,6 +1192,71 @@ class Repo:
                     (row["id"], row["id"]),
                 )
             for demand, company_key, unit, supply in links:
+                self._accept_one(demand, company_key, unit, supply, registry)
+        return len(links)
+
+    def _require_adhoc(self, row: sqlite3.Row, registry: Registry) -> None:
+        """Refuse anything that is not a bare-company assignment right now.
+
+        This is the ONE path in the app allowed to blank a Company cell the
+        spreadsheet wrote (see engine/adhoc.releasable for why that carve-out
+        exists at all). It has to be enforced by SHAPE, not by trusting the
+        caller's set: a bare company name is a purchase order, a numbered unit
+        is a statement about which vehicle runs the trip, and this method can
+        only ever cancel the first kind. The engine computed its eligible set
+        from a report that may be seconds stale, so the question is re-asked
+        here against the row about to be written.
+
+        The 21-day notice test is deliberately NOT re-asked. That would put a
+        clock in the store, which nothing here is allowed to have; freshness
+        comes from the route recomputing the whole preview from committed state
+        before it writes, exactly as /rechain does.
+        """
+        value = str(self._raw_with_overlays(row).get(COMPANY_NAME) or "").strip()
+        resolved = registry.resolve_company(value) if value else None
+        if resolved is None or resolved[1] is not None:
+            raise RepoError(
+                "Only a bare-company (ad hoc) assignment can be reclaimed")
+
+    def reclaim_adhoc(
+        self,
+        release: AbstractSet[TripId],
+        links: Sequence[tuple[TripId, str, int | None, TripId | None]],
+    ) -> int:
+        """Cancel the named ad hoc hires and write the replanned links.
+
+        One transaction, links in chain order, and the clears INTERLEAVED with
+        the accepts rather than done up front. repo.rechain clears first because
+        everything it released is going to be re-decided; here the opposite is
+        required. An eligible trip the plan could not cover must keep its hire —
+        a pre-clear loop over the eligible set is precisely the "leaves a trip
+        with no bus at all" bug this action exists to avoid, which is why
+        `release` is the RECLAIMED ids and not the eligible ones.
+
+        Ordering still works: a reclaimed trip that feeds a later hop has had
+        its numbered assignment written by the time _accept_one checks it.
+        """
+        registry = self.registry()
+        with self.conn:
+            for demand, company_key, unit, supply in links:
+                if demand in release:
+                    row = self._db_row(demand)
+                    self._require_adhoc(row, registry)
+                    # _clear_assignment, NOT a DELETE of the override the way
+                    # rechain does it: for a company name that came from the
+                    # sheet the delete is a no-op and the imported value comes
+                    # straight back, so _accept_one would then refuse the trip
+                    # as already assigned. Writing an empty override is how the
+                    # Data tab expresses the same thing, and _write_override
+                    # upserts the new bus over it.
+                    self._clear_assignment(row)
+                    # The link OUT of this trip goes too — same trade as
+                    # reassign, and for the same reason: this is a move to a
+                    # different bus, so a link claiming this trip fed the next
+                    # one is now simply wrong and nothing downstream reports it.
+                    self.conn.execute(
+                        "DELETE FROM accepted_links WHERE supply_trip_id = ?",
+                        (row["id"],))
                 self._accept_one(demand, company_key, unit, supply, registry)
         return len(links)
 
