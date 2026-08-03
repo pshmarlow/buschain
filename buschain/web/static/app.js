@@ -1497,6 +1497,28 @@ async function acceptWholePlan() {
   await mutate("/accept-plan", {}, (res) => `Accepted ${res.accepted} link(s)`);
 }
 
+/* Uncovered trips the horizon put out of scope — the server's count, because
+   the client would have to re-derive both the demand rule and the cutoff to get
+   it, and a wrong number here is worse than none. */
+function beyondHorizon() {
+  return (S.engine && S.engine.beyond_horizon) || 0;
+}
+
+/* The one message that turns an empty board back into an explicable one. On
+   import day the season usually starts more than a month out, so the default
+   window is genuinely empty — and without this the summary blames the fleet
+   ("no chain can be built from the currently assigned units") for a window the
+   dispatcher set and can widen in one click. Same reasoning as the empty-runs
+   hint below it: a setting must never read as a broken engine. */
+function horizonHint(box) {
+  const beyond = beyondHorizon();
+  if (!beyond) return;
+  box.append(el("p", { class: "hint" },
+    `${plural(beyond, "more uncovered trip")} outside the plan-ahead window `
+    + `(after ${S.horizon_through}). Widen it to bring them in — they are still `
+    + `listed everywhere else, and can still be assigned by hand.`));
+}
+
 function renderPlanSummary() {
   const box = $("#plan-summary");
   box.replaceChildren();
@@ -1506,10 +1528,29 @@ function renderPlanSummary() {
 
   if (!n) {
     box.classList.remove("hidden");
-    box.append(el("span", {}, uncovered
-      ? "No chain can be built from the currently assigned units. Every uncovered "
-        + "trip needs a bus that is not already committed elsewhere."
-      : "Nothing uncovered — no plan needed."));
+    /* Four readings of "no plan", and they send the reader somewhere different:
+       nothing to do, nothing in scope, nothing chainable in a window that hid
+       some, or a fleet with no room. The two middle ones are why this is split
+       at all — blaming the fleet for a window the dispatcher set sends people
+       hunting a capacity problem that is not there. */
+    const inScope = uncovered - beyondHorizon();
+    box.append(el("span", {}, !uncovered
+      ? "Nothing uncovered — no plan needed."
+      : !inScope
+        ? "Nothing to plan inside the plan-ahead window."
+        : beyondHorizon()
+          /* Naming the count only matters when the window hid some: "no chain
+             from 190 uncovered trips" reads as a failing fleet when 186 of them
+             were never considered. */
+          ? `No chain can be built from the ${plural(inScope, "uncovered trip")} `
+            + "inside the plan-ahead window. Each needs a bus that is not "
+            + "already committed elsewhere."
+          /* Word for word what this said before the horizon existed. With
+             nothing out of scope the panel has to say what it always said, or
+             "Plan ahead: All" stops meaning "as before". */
+          : "No chain can be built from the currently assigned units. Every uncovered "
+            + "trip needs a bus that is not already committed elsewhere."));
+    horizonHint(box);
     /* With empty runs off, a bus can only ever take a trip departing where it
        last arrived, and most of the fleet is parked where nothing departs. That
        is a setting, not a fact about the fleet, so an empty plan has to say so
@@ -1556,6 +1597,9 @@ function renderPlanSummary() {
       + `reachability ignores whether a bus is free. ${n} is what the fleet can `
       + `actually absorb — the rest need capacity, not planning.`));
   }
+  /* Also on a non-empty plan: "12 of 190 uncovered trips" reads as a fleet
+     that can barely cope when most of the 190 were never considered. */
+  horizonHint(box);
 }
 
 /* The toggles reflect server state, never local state: the objective changes
@@ -1571,6 +1615,13 @@ function renderPlanToggles() {
      than letting "0" pass as truthy. */
   document.querySelectorAll("#reposition-group button").forEach((b) =>
     b.classList.toggle("active", (b.dataset.reposition === "1") === !!s.reposition));
+  document.querySelectorAll("#horizon-group button").forEach((b) =>
+    b.classList.toggle("active", b.dataset.horizon === s.horizon));
+  /* The server's resolved date, never today + N recomputed here: the plan on
+     screen was built against that exact cutoff, and a browser left open
+     overnight would otherwise print a date one day off the one it is showing. */
+  $("#horizon-through").textContent =
+    S.horizon_through ? `through ${S.horizon_through}` : "";
 }
 
 /* Whether the engine may propose an empty repositioning run. Read from server
@@ -1673,6 +1724,13 @@ function renderRechain() {
       + "file — edit those in the Data tab");
   }
   if (r.frozen_locked) frozen.push(`${r.frozen_locked} are locked`);
+  /* Listed with the other two because it is the same kind of fact — work this
+     action deliberately left alone — but it is the only one the reader can undo
+     from the toolbar, so it names the date and the way out. */
+  if (r.frozen_horizon) {
+    frozen.push(`${r.frozen_horizon} start after ${r.horizon} and are outside `
+      + "the plan-ahead window");
+  }
   if (frozen.length) {
     box.append(el("p", { class: "hint" }, "Untouched: " + frozen.join("; ")
       + ". Trips that have already started are never re-decided."));
@@ -1797,8 +1855,24 @@ function renderReclaim() {
       + "bus can take those (rule 10)");
   }
   if (r.frozen_locked) frozen.push(`${r.frozen_locked} are locked`);
+  if (r.frozen_horizon) {
+    frozen.push(`${r.frozen_horizon} start after ${r.horizon} and are outside `
+      + "the plan-ahead window");
+  }
   if (frozen.length) box.append(el("p", { class: "hint" },
     "Untouched: " + frozen.join("; ") + "."));
+
+  /* The two windows can cross: a plan-ahead window shorter than the notice
+     period leaves no trip that is both far enough away to cancel and near
+     enough to plan, so the eligible list is empty for a reason no count above
+     makes obvious. Said plainly, because the alternative is a button that looks
+     broken every time it is pressed. */
+  if (!r.eligible.length && r.horizon && r.horizon < r.cutoff) {
+    box.append(el("p", { class: "reason" },
+      `Nothing can be reclaimed: a hire needs ${r.notice_days} days' notice `
+      + `(so ${r.cutoff} or later), but the plan-ahead window ends ${r.horizon}. `
+      + "Widen it past the notice date to reclaim anything."));
+  }
 
   const foot = el("div", { class: "toolbar" });
   /* Both numbers, because they differ and the gap surprises people: the write
@@ -3360,6 +3434,35 @@ function renderTimelines() {
         ? tripLabel(f.later)
         : `${tripLabel(f.earlier)} → ${tripLabel(f.later)}`)));
   }
+
+  const parkedBox = $("#parked");
+  parkedBox.replaceChildren();
+  if (!S.engine.parked.length) parkedBox.append(el("p", { class: "hint" }, "None."));
+  /* A unit idle mid-chain longer than any chain window. The planner cannot
+     propose into these (its cross-city moves are tail-only), so the fits are
+     listed for a person instead — acting on one is the board's ordinary drag,
+     which the drop rules already allow. Fits arrive cheapest-drive-first. */
+  /* Windows with something to act on first — on live data most windows are
+     history (a bus that sat idle months ago) and would bury the one that
+     matters. Stable sort, so the canonical unit order holds within groups. */
+  for (const w of [...S.engine.parked].sort((a, b) => b.fits.length - a.fits.length)) {
+    const from = tripById(w.after), until = tripById(w.before);
+    parkedBox.append(el("details", {},
+      el("summary", {},
+        el("span", { class: "badge " + (w.fits.length ? "warn" : "system") },
+          w.fits.length ? `${plural(w.fits.length, "trip")} fit` : "idle"),
+        ` ${unitLabel(w.company, w.unit)} parked in ${w.city} for ${w.days} days`
+        + (from && until ? ` (${from.end} → ${until.start})` : "")),
+      ...w.fits.map((f) => {
+        const drive = f.er_out_days + f.er_back_days;
+        return el("div", { class: "finding",
+          onclick: () => selectOnBoard(f.demand) },
+        el("span", { class: "badge system" },
+          drive ? `${plural(drive, "day")} empty` : "no drive"),
+        ` ${tripLabel(f.demand)} — departs ${f.gap_out} days after the bus lands`
+        + (f.chains ? "" : ", records no link"));
+      })));
+  }
 }
 
 /* ---------- Worklist tab ---------- */
@@ -4070,6 +4173,15 @@ $("#reclaim-btn").addEventListener("click", previewReclaim);
 $("#reposition-group").addEventListener("click", (e) => {
   if (e.target.dataset.reposition) {
     setPlanSetting({ reposition: e.target.dataset.reposition === "1" });
+  }
+});
+
+/* Sent as the preset string ("30", "all"), never as a resolved date: the server
+   decides what "30" means from its own today, so a tab left open overnight
+   cannot plan against yesterday's window. */
+$("#horizon-group").addEventListener("click", (e) => {
+  if (e.target.dataset.horizon) {
+    setPlanSetting({ horizon: e.target.dataset.horizon });
   }
 });
 

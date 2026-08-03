@@ -21,6 +21,15 @@ def client(tmp_path, workbook_bytes):
         assert res.status_code == 200, res.text
         assert res.json()["rows"] == 1670
         assert c.post("/api/registry/seed").status_code == 200
+        # Plan ahead: all. These tests pin what the ENGINE does, and the
+        # shipped default ("30", a month from today) would make almost every
+        # one of them a measurement of where today happens to fall in a fixed
+        # season — the reference workbook ends Oct 2026, so they would go from
+        # asserting 113 covered trips to asserting 0, and then keep changing
+        # answer as real time passes. The horizon has its own tests below,
+        # which say so and skip once the data has aged out; this is the same
+        # convention already used for the rule-11 notice tests.
+        assert c.post("/api/settings", json={"horizon": "all"}).status_code == 200
         yield c
 
 
@@ -48,6 +57,21 @@ def test_state_serves_window_rules(client):
     # order or the client's pair lookup depends on how the set happened to hash.
     assert rules["near_pairs"] == sorted(sorted(p) for p in rules["near_pairs"])
     assert graph.min_gap_days(*rules["near_pairs"][0]) == rules["near_gap_days"]
+
+
+def test_state_carries_parked_windows(client):
+    """The parked list must survive serialization with ids in the same
+    'origin:key' form every other engine output uses — the panel dies
+    silently without them."""
+    parked = client.get("/api/state").json()["engine"]["parked"]
+    assert isinstance(parked, list)
+    for w in parked:
+        assert {"company", "unit", "after", "before",
+                "city", "days", "fits"} <= w.keys()
+        assert w["after"].count(":") == 1 and w["days"] > 0
+        for f in w["fits"]:
+            assert {"demand", "gap_out", "er_out_days",
+                    "er_back_days", "chains"} <= f.keys()
 
 
 def test_direct_assign_without_supply(client):
@@ -567,7 +591,8 @@ def _link_count(plan):
 def test_plan_is_offered_and_settings_replan(client):
     state = client.get("/api/state").json()
     assert state["settings"] == {
-        "mode": "manual", "objective": "coverage", "reposition": True}
+        "mode": "manual", "objective": "coverage", "reposition": True,
+        "horizon": "all"}          # pinned by the fixture, not the default
 
     coverage = _plan(client)
     assert _link_count(coverage) > len(state["engine"]["suggestions_by_trip"]), \
@@ -611,7 +636,8 @@ def test_reposition_toggle_governs_the_whole_engine(client):
     # Persisted, and each setting patches independently of the others.
     assert client.post("/api/settings", json={"mode": "auto"}).status_code == 200
     assert client.get("/api/state").json()["settings"] == {
-        "mode": "auto", "objective": "coverage", "reposition": False}
+        "mode": "auto", "objective": "coverage", "reposition": False,
+        "horizon": "all"}          # pinned by the fixture, not the default
     assert client.post("/api/settings", json={"reposition": True}).status_code == 200
     assert _link_count(_plan(client)) == _link_count(before["plan"])
 
@@ -851,11 +877,120 @@ def test_pick_list_edits_reach_the_information_sheet(client):
     assert "Estonian" in options and "Korea" not in options
 
 
+# -- the planning horizon ----------------------------------------------------
+# Everything from here down runs against the real clock, because both ends of
+# the planning window are measured from today's date and the web layer is where
+# that enters the system. The reference workbook's trips end in Oct 2026, so
+# each test that needs a future trip says so and skips rather than silently
+# asserting nothing once the data is entirely in the past.
+
+def _uncovered_after(client, iso):
+    """Live uncovered trips starting after a date, straight off /state."""
+    state = client.get("/api/state").json()
+    return [t for t in state["trips"]
+            if not t["assignment"] and t["status"] != "Canceled" and t["start"] > iso]
+
+
+def test_horizon_bounds_everything_the_planner_derives(client):
+    """One switch, one answer: the window has to reach the single-hop
+    candidates and reachability too, not only the chains. A trip the board
+    offers while the planner refuses to consider it is the same setting
+    disagreeing with itself."""
+    from datetime import date, timedelta
+    # The fixture pins "all", so this is the unbounded engine.
+    wide = client.get("/api/state").json()
+    assert wide["horizon_through"] is None
+    assert wide["engine"]["beyond_horizon"] == 0
+    if not wide["engine"]["plan"]["covered"]:
+        pytest.skip("reference workbook is entirely in the past")
+
+    cutoff = (date.today() + timedelta(days=30)).isoformat()
+    outside = {t["id"] for t in _uncovered_after(client, cutoff)}
+    if not outside:
+        pytest.skip("no uncovered trip more than a month out")
+
+    assert client.post("/api/settings", json={"horizon": "30"}).status_code == 200
+    narrow = client.get("/api/state").json()
+    assert narrow["horizon_through"] == cutoff
+    assert narrow["engine"]["beyond_horizon"] == len(outside)
+
+    e = narrow["engine"]
+    assert not (outside & set(e["plan"]["covered"]))
+    assert not (outside & set(e["suggestions_by_trip"]))
+    assert not (outside & set(e["reachable"]))
+    # Nothing DISAPPEARS, though — the horizon bounds what the planner decides,
+    # not what the dispatcher can see or reach by hand.
+    assert outside <= {t["id"] for t in narrow["trips"]}
+
+
+def test_horizon_round_trips_and_rejects_unknown_values(client):
+    assert client.post("/api/settings", json={"horizon": "90"}).status_code == 200
+    assert client.get("/api/state").json()["settings"]["horizon"] == "90"
+    # Patches independently: setting one thing must not reset the rest.
+    assert client.post("/api/settings", json={"objective": "idle"}).status_code == 200
+    settings = client.get("/api/state").json()["settings"]
+    assert (settings["horizon"], settings["objective"]) == ("90", "idle")
+    # A free day count is not accepted — the presets are a closed set, so a
+    # typo cannot quietly become a window nobody chose.
+    assert client.post("/api/settings", json={"horizon": "45"}).status_code == 422
+    assert client.post("/api/settings", json={"horizon": "nonsense"}).status_code == 422
+    assert client.get("/api/state").json()["settings"]["horizon"] == "90"
+
+
+def test_a_fresh_database_plans_a_month_ahead(tmp_path, workbook_bytes):
+    """The shipped default, asserted where no fixture has overridden it."""
+    from datetime import date, timedelta
+    app = create_app(tmp_path / "default.db")
+    with TestClient(app) as c:
+        c.post("/api/import", files={
+            "file": ("t.xlsx", workbook_bytes, "application/octet-stream")})
+        state = c.get("/api/state").json()
+        assert state["settings"]["horizon"] == "30"
+        assert state["horizon_through"] == (
+            date.today() + timedelta(days=30)).isoformat()
+
+
+def test_rechain_never_releases_a_trip_the_horizon_hides(client):
+    """The correctness rule behind the fifth release boundary: an assignment
+    past the cutoff is invisible to the replan, so releasing it would strand it
+    every time. Asserted through the API because that is where the horizon is
+    resolved from today."""
+    from datetime import date, timedelta
+    cutoff = (date.today() + timedelta(days=30)).isoformat()
+    if not _uncovered_after(client, cutoff):
+        pytest.skip("no trip more than a month out")
+
+    assert client.post("/api/settings", json={"horizon": "30"}).status_code == 200
+    preview = client.get("/api/rechain").json()
+    assert preview["horizon"] == cutoff
+
+    by_id = {t["id"]: t for t in client.get("/api/state").json()["trips"]}
+    assert all(by_id[i]["start"] <= cutoff for i in preview["released"])
+    # And the counters still partition the future assignments.
+    assert preview["frozen_horizon"] >= 0
+    assert not set(preview["stranded"]) - set(preview["released"])
+
+
+def test_reclaim_separates_the_notice_deadline_from_the_horizon(client):
+    """A window shorter than the 21-day notice can leave nothing eligible, and
+    the two counters are what let the panel say which rule did it."""
+    wide = client.get("/api/reclaim-adhoc").json()
+    assert wide["horizon"] is None and wide["frozen_horizon"] == 0
+    if not wide["eligible"]:
+        pytest.skip("no cancellable hire in the reference data today")
+
+    assert client.post("/api/settings", json={"horizon": "14"}).status_code == 200
+    narrow = client.get("/api/reclaim-adhoc").json()
+    # 14 days out ends before the 21-day notice date, so the two rules cross
+    # and every hire is frozen by one or the other.
+    assert narrow["horizon"] < narrow["cutoff"]
+    assert narrow["eligible"] == []
+    assert narrow["frozen_horizon"] == len(wide["eligible"])
+    # Mutually exclusive, so the panel's arithmetic adds up.
+    assert narrow["frozen_notice"] == wide["frozen_notice"]
+
+
 # -- locks and the master re-chain -------------------------------------------
-# These run against the real clock, because the horizon is today's date and the
-# web layer is where that enters the system. The reference workbook's trips end
-# in Oct 2026, so each test that needs a future trip says so and skips rather
-# than silently asserting nothing once the data is entirely in the past.
 
 def _future_suggestion(client):
     """An engine-proposed link whose demand has not started yet, or None."""

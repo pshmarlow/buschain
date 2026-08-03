@@ -153,7 +153,20 @@
         <button class="btn small" data-reposition="1">Allowed</button>
         <button class="btn small" data-reposition="0">Same city only</button>
       </span>
-      <!-- The only control that takes assignments BACK. It reads the three
+      <!-- How far ahead the planner may commit a bus. Bounds everything the
+           engine decides on its own — chains, single-hop candidates, optimize,
+           re-chain and reclaim — but never the board drag or the assign
+           pickers, which are manual and stay unbounded. #horizon-through
+           prints the resolved date because "1 month" alone cannot explain an
+           empty plan. -->
+      <span class="seg-group" id="horizon-group">Plan ahead
+        <button class="btn small" data-horizon="14">2 weeks</button>
+        <button class="btn small" data-horizon="30">1 month</button>
+        <button class="btn small" data-horizon="90">3 months</button>
+        <button class="btn small" data-horizon="all">All</button>
+        <small id="horizon-through"></small>
+      </span>
+      <!-- The only control that takes assignments BACK. It reads the four
            settings to its left, so it sits after them. -->
       <button class="btn small" id="rechain-btn"
               title="Rebuild every releasable future chain from scratch under the
@@ -234,6 +247,10 @@ anything, and never cancels a hire it cannot replace.">Reclaim from ad hoc…</b
     <details>
       <summary>Unit integrity findings</summary>
       <div id="integrity"></div>
+    </details>
+    <details>
+      <summary>Parked buses</summary>
+      <div id="parked"></div>
     </details>
   </section>
 

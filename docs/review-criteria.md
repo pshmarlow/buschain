@@ -12,15 +12,21 @@ data preservation and rule fidelity above everything else.
   silently corrupts the customer's workbook; this is the highest-consequence
   code in the repo.
 - `buschain/engine/graph.py` — `feasible_edges` is the single rulebook every
-  planner (greedy, exact solver, suggester) consumes. A wrong edge proposes
-  illegal assignments everywhere at once.
+  planner (greedy, exact solver, suggester) consumes, and `insertion_ok` is
+  the same rulebook for the board's drop gates and `engine/parked.py`'s
+  fit list. A wrong edge proposes illegal assignments everywhere at once.
+- `buschain/engine/adhoc.py` — rule 11's eligibility gates protect purchases:
+  a wrong `releasable`/`refusal` cancels a hire that may not be cancelled, or
+  strands a covered trip.
 - `buschain/store/repo.py` — the only mutable state: accept/rechain/undo
   transaction boundaries and the undo snapshot protocol.
 - `buschain/contract.py` + `buschain/codecs/` import boundary — where silent
   row drops or column-shifted values would enter (acceptance test 2: nothing
   silently dropped).
 - `buschain/web/api.py` commit endpoints (`/accept*`, `/rechain`,
-  `/optimal-plan`) — the paths that write assignments.
+  `/reclaim-adhoc`, `/reassign`, `/optimal-plan`,
+  `/registry/companies/{key}/rename`) — the paths that write assignments or
+  rewrite cells.
 
 ## Domain-specific checks
 
@@ -131,7 +137,7 @@ data preservation and rule fidelity above everything else.
 
 ## Key documents
 
-- `bus-chaining-build-brief.md` — the spec: chaining rules 1–9, acceptance
+- `bus-chaining-build-brief.md` — the spec: chaining rules 1–11, acceptance
   tests AT1–AT7, and the out-of-scope list. Rule changes must trace here.
 - `docs/engine.md` — the maintained engine deep-dive; verify engine diffs
   against it and update it when behavior changes.

@@ -16,7 +16,7 @@ from typing import AbstractSet, Sequence
 from ..model import (
     AcceptedLink, ContractReport, EngineResult, Registry, Status, Trip, TripId,
 )
-from . import checks, graph, plan as plan_mod, reach, solve, suggest
+from . import checks, graph, parked, plan as plan_mod, reach, solve, suggest
 
 
 def evaluate(
@@ -27,6 +27,7 @@ def evaluate(
     reposition: bool = True,
     locked: AbstractSet[TripId] = frozenset(),
     as_of: date | None = None,
+    horizon: date | None = None,
 ) -> EngineResult:
     """locked: trips the planner must not decide anything about.
 
@@ -35,10 +36,23 @@ def evaluate(
     consulted date.today() would stop being a pure function of its inputs — the
     same state would produce different plans on different days and no test could
     pin either. The web layer supplies today's date; the engine never asks.
+
+    horizon: the far end of the same window — when given, only trips starting on
+    or before this date are demand. It is an absolute DATE, never a "plan ahead
+    N days" count, for the reason adhoc.py gives for keeping the cancellation
+    notice out of graph.py: a now-relative number loose in a module of
+    trip-to-trip predicates is one refactor away from being read as a gap.
+    Resolving today + N is the web layer's job, and doing it there is also what
+    keeps this function pinnable by a test that names both ends.
+
+    Both default to None (unbounded), which is what the engine did before either
+    was settable — so a caller that plans the whole dataset still can, and every
+    test that predates the horizon keeps its meaning.
     """
     trips_by_id: dict[TripId, Trip] = {t.id: t for t in report.trips}
     (assigned_live, supply_trips, demand_trips,
-     unit_assignments, adhoc_by_company) = _split(report, locked, as_of)
+     unit_assignments, adhoc_by_company, beyond_horizon) = _split(
+        report, locked, as_of, horizon)
 
     # Repositioning defaults on: without it a parked bus offers nothing, which
     # is exactly the state most of the fleet ends up in. The ranking in
@@ -75,6 +89,10 @@ def evaluate(
         # confirmed link immune to replanning, with no lock flag anywhere.
         plan=plan_mod.build_plan(
             supply_trips, demand_trips, unit_assignments, objective, reposition),
+        # Reported, never planned: the idle blocks the tail-only rule hides
+        # from the planner. Same reposition switch as everything above.
+        parked=parked.windows(demand_trips, unit_assignments, reposition),
+        beyond_horizon=beyond_horizon,
     )
 
 
@@ -127,7 +145,11 @@ def drop_targets(
     trip = next((t for t in report.trips if t.id == trip_id), None)
     if trip is None or trip.status is Status.CANCELED:
         return [], []
-    _, _, _, unit_assignments, _ = _split(report, frozenset(), None)
+    # No date bounds, deliberately — both of them. The board's drag is a manual
+    # escape hatch like the assign pickers: the horizon says what the PLANNER
+    # decides on its own, and refusing a drop a dispatcher aimed by hand because
+    # the trip is five weeks out would be the setting overruling its owner.
+    _, _, _, unit_assignments, _, _ = _split(report, frozenset(), None, None)
 
     out: list[DropTarget] = []
     refused: list[DropRefusal] = []
@@ -155,9 +177,14 @@ def drop_targets(
 
 
 def _split(report: ContractReport, locked: AbstractSet[TripId],
-           as_of: date | None):
+           as_of: date | None, horizon: date | None):
     """The one reading of supply vs demand, shared by evaluate and the solver
-    so the two can never disagree about what is in play."""
+    so the two can never disagree about what is in play.
+
+    Both date bounds cut DEMAND only. Supply is every assigned trip whatever its
+    date: a bus that finishes the day before the window opens is standing there
+    ready, and dropping it would make the first trips in the window unreachable
+    for no reason anybody asked for."""
     # Canceled trips are excluded from matching but retained for audit and
     # as broken-chain roots (rule 7).
     live = [t for t in report.trips if t.status is not Status.CANCELED]
@@ -170,11 +197,17 @@ def _split(report: ContractReport, locked: AbstractSet[TripId],
     # nothing to accept. It keeps its place on its unit's timeline and, when
     # assigned, still feeds the next hop — locking says "do not re-decide this
     # trip", not "pretend this bus is not there".
-    demand_trips = [
+    in_play = [
         t for t in live
         if t.assignment is None and t.id not in locked
         and (as_of is None or t.start > as_of)
     ]
+    # The horizon is applied last and its casualties counted, because "no plan"
+    # and "no plan yet" are different answers and only this line knows which one
+    # a caller is looking at. Note `<=`: a bound of today+30 includes the trip
+    # on day 30 — the preset says "a month ahead", not "a month minus one".
+    demand_trips = [t for t in in_play if horizon is None or t.start <= horizon]
+    beyond_horizon = len(in_play) - len(demand_trips)
 
     unit_assignments: dict[tuple[str, int], list[Trip]] = defaultdict(list)
     adhoc_by_company: dict[str, list[Trip]] = defaultdict(list)
@@ -184,7 +217,8 @@ def _split(report: ContractReport, locked: AbstractSet[TripId],
             unit_assignments[(t.assignment.company, t.assignment.unit)].append(t)
         else:
             adhoc_by_company[t.assignment.company].append(t)
-    return assigned_live, supply_trips, demand_trips, unit_assignments, adhoc_by_company
+    return (assigned_live, supply_trips, demand_trips, unit_assignments,
+            adhoc_by_company, beyond_horizon)
 
 
 def optimal_plan(
@@ -192,6 +226,7 @@ def optimal_plan(
     reposition: bool = True,
     locked: AbstractSet[TripId] = frozenset(),
     as_of: date | None = None,
+    horizon: date | None = None,
     time_limit: int = 60,
     objective: plan_mod.Objective = plan_mod.DEFAULT_OBJECTIVE,
 ) -> tuple[solve.SolvedPlan, int]:
@@ -208,8 +243,11 @@ def optimal_plan(
     mostly for plans nobody asked for. This is a preview-and-commit action,
     like the master re-chain.
     """
-    _, supply_trips, demand_trips, unit_assignments, _ = _split(
-        report, locked, as_of)
+    # Same _split call as evaluate's, horizon included: the solver is only
+    # meaningful as a comparison against the plan the board shows, and two
+    # different demand sets would make "124 vs 113" a comparison of nothing.
+    _, supply_trips, demand_trips, unit_assignments, _, _ = _split(
+        report, locked, as_of, horizon)
     # The baseline is the plan the BOARD shows — under the idle objective,
     # comparing against the coverage plan would report a gap against numbers
     # the user never chose, and a fallback would carry the wrong label.

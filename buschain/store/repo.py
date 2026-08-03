@@ -165,7 +165,14 @@ class Repo:
     # and how to present it.
     MODES = ("auto", "manual")
     OBJECTIVES = ("coverage", "idle")
-    _SETTING_KEYS = ("plan_mode", "plan_objective", "plan_reposition")
+    # How far ahead the planner may commit a bus, as a day count in TEXT plus
+    # "all" for no bound. A closed set validated like OBJECTIVES rather than a
+    # free integer, for two reasons: the control is four buttons, and an
+    # `int | None` field could not express "no bound" through the settings
+    # route, where None already means "leave this one alone".
+    HORIZONS = ("14", "30", "90", "all")
+    _SETTING_KEYS = ("plan_mode", "plan_objective", "plan_reposition",
+                     "plan_horizon")
 
     def settings(self) -> dict[str, Any]:
         marks = ", ".join("?" * len(self._SETTING_KEYS))
@@ -181,15 +188,26 @@ class Repo:
             # Defaults on, which is what the engine did before this was settable
             # — an upgraded database has no row and must not silently replan.
             "reposition": rows.get("plan_reposition", "1") == "1",
+            # A month, and deliberately NOT "whatever the engine did before"
+            # like reposition above: an unbounded planner commits buses to work
+            # months out on a schedule still being edited, and rule 11 gives
+            # only 21 days to cancel a hire. So an existing database does change
+            # behaviour on upgrade, which is the point of the feature rather
+            # than an oversight — "all" is one click away and is still exactly
+            # the old planner.
+            "horizon": rows.get("plan_horizon", "30"),
         }
 
     def set_settings(self, mode: str | None = None,
                      objective: str | None = None,
-                     reposition: bool | None = None) -> dict[str, Any]:
+                     reposition: bool | None = None,
+                     horizon: str | None = None) -> dict[str, Any]:
         if mode is not None and mode not in self.MODES:
             raise RepoError(f"Unknown mode {mode!r}")
         if objective is not None and objective not in self.OBJECTIVES:
             raise RepoError(f"Unknown objective {objective!r}")
+        if horizon is not None and horizon not in self.HORIZONS:
+            raise RepoError(f"Unknown horizon {horizon!r}")
         with self._write_lock, self.conn:
             for key, value in (
                 ("plan_mode", mode),
@@ -197,6 +215,7 @@ class Repo:
                 # meta values are TEXT; the bool round-trips as "1"/"0" rather
                 # than str(bool), which would make "False" a truthy stored row.
                 ("plan_reposition", None if reposition is None else str(int(reposition))),
+                ("plan_horizon", horizon),
             ):
                 if value is not None:
                     self.conn.execute(
@@ -1417,8 +1436,9 @@ class Repo:
 
         Deliberately not the trips themselves: their `raw` is ~1.5 MB and no
         action rewrites it. What moves is the overlay (cell_overrides), the
-        chain lineage (accepted_links), and which rows are live — so the
-        snapshot is those three, and it stays a few KB.
+        chain lineage (accepted_links), which rows are live (deleted, and
+        which manual rows exist), the locks, and the company naming a rename
+        rewrites — six keys, and it stays a few KB.
         """
         return json.dumps({
             "overrides": [

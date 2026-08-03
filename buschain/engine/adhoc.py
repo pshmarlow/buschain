@@ -54,7 +54,8 @@ from . import evaluate, graph, plan as plan_mod
 ADHOC_CANCEL_NOTICE_DAYS = 21
 
 
-def refusal(trip: Trip, *, locked: AbstractSet[TripId], as_of: date) -> str | None:
+def refusal(trip: Trip, *, locked: AbstractSet[TripId], as_of: date,
+            horizon: date | None = None) -> str | None:
     """Which rule forbids cancelling this hire — None if it may be cancelled.
 
     The tests run in this order so the counters they feed are mutually
@@ -64,6 +65,13 @@ def refusal(trip: Trip, *, locked: AbstractSet[TripId], as_of: date) -> str | No
     The notice test SUBSUMES rechain's "only trips that have not started yet"
     boundary — 21 days out is comfortably in the future — which is why that
     check is not repeated here. It is not missing.
+
+    It does NOT subsume the horizon, and the two are asked in this order on
+    purpose. Notice is the supplier's deadline: the hire cannot be cancelled at
+    any price, and a dispatcher who sees that number knows there is nothing to
+    do about it. The horizon is a scope its owner chose and can widen in one
+    click. Reported the other way round, "frozen by the cancellation deadline"
+    would be advice to give up on work that is merely out of view.
     """
     if trip.assignment is None or trip.assignment.unit is not None:
         return "not_adhoc"
@@ -79,10 +87,17 @@ def refusal(trip: Trip, *, locked: AbstractSet[TripId], as_of: date) -> str | No
         return "pax"
     if (trip.start - as_of).days < ADHOC_CANCEL_NOTICE_DAYS:
         return "notice"
+    # A horizon shorter than the notice period leaves NO eligible hire at all:
+    # every trip is either too close to cancel or too far to look at. That is
+    # arithmetic, not a bug, and the two counters are what let the panel say so
+    # instead of showing an empty list and no reason.
+    if horizon is not None and trip.start > horizon:
+        return "horizon"
     return None
 
 
-def releasable(trip: Trip, *, locked: AbstractSet[TripId], as_of: date) -> bool:
+def releasable(trip: Trip, *, locked: AbstractSet[TripId], as_of: date,
+               horizon: date | None = None) -> bool:
     """May this ad hoc hire be cancelled?
 
     Note what is NOT a parameter: who wrote the company name. Everywhere else
@@ -100,7 +115,7 @@ def releasable(trip: Trip, *, locked: AbstractSet[TripId], as_of: date) -> bool:
       written and refuses anything that is not a bare-company cell, so the
       carve-out cannot widen by accident.
     """
-    return refusal(trip, locked=locked, as_of=as_of) is None
+    return refusal(trip, locked=locked, as_of=as_of, horizon=horizon) is None
 
 
 def build(
@@ -110,6 +125,7 @@ def build(
     *,
     locked: AbstractSet[TripId] = frozenset(),
     as_of: date,
+    horizon: date | None = None,
     objective: plan_mod.Objective = plan_mod.DEFAULT_OBJECTIVE,
     reposition: bool = True,
 ) -> AdhocReclaimResult:
@@ -117,7 +133,7 @@ def build(
     frozen: Counter[str] = Counter()
     eligible: set[TripId] = set()
     for t in report.trips:
-        why = refusal(t, locked=locked, as_of=as_of)
+        why = refusal(t, locked=locked, as_of=as_of, horizon=horizon)
         if why is None:
             eligible.add(t.id)
         elif why not in ("not_adhoc", "canceled"):
@@ -145,17 +161,20 @@ def build(
     ]
 
     # The baseline runs on the untouched report with the SAME objective,
-    # reposition, locked and as_of, so `regressed` isolates the effect of the
-    # reclaim rather than of the horizon — the same reason optimal_plan hands
-    # back the greedy count alongside the solved one.
+    # reposition, locked, as_of and horizon, so `regressed` isolates the effect
+    # of the reclaim rather than of the window — the same reason optimal_plan
+    # hands back the greedy count alongside the solved one. Pass the horizon to
+    # one of these two and not the other and every trip past the cutoff shows up
+    # as a regression the reclaim did not cause.
     baseline = evaluate(report, registry, accepted, objective, reposition,
-                        locked, as_of)
+                        locked, as_of, horizon)
     result = evaluate(stripped, registry, kept, objective, reposition,
-                      locked, as_of)
+                      locked, as_of, horizon)
 
     covered = result.plan.covered
     return AdhocReclaimResult(
         as_of=as_of,
+        horizon=horizon,
         notice_days=ADHOC_CANCEL_NOTICE_DAYS,
         eligible=tuple(sorted(eligible)),
         reclaimed=tuple(sorted(eligible & covered)),
@@ -172,6 +191,7 @@ def build(
         frozen_locked=frozen["locked"],
         frozen_pax=frozen["pax"],
         frozen_notice=frozen["notice"],
+        frozen_horizon=frozen["horizon"],
     )
 
 

@@ -119,6 +119,10 @@ def client(tmp_path, workbook_bytes):
             "file": ("t.xlsx", workbook_bytes, "application/octet-stream")})
         assert res.status_code == 200, res.text
         assert c.post("/api/registry/seed").status_code == 200
+        # The solve is compared against the greedy plan on a fixed-season
+        # workbook; the default month-ahead horizon would shrink both to zero
+        # and make "+11" a comparison of nothing. See test_api.py's fixture.
+        assert c.post("/api/settings", json={"horizon": "all"}).status_code == 200
         yield c
 
 

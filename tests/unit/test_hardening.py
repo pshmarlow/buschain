@@ -184,6 +184,9 @@ def client(tmp_path, workbook_bytes):
             "file": ("t.xlsx", workbook_bytes, "application/octet-stream")})
         assert res.status_code == 200, res.text
         assert c.post("/api/registry/seed").status_code == 200
+        # As in test_api.py's fixture: these assert trust-boundary behaviour,
+        # not where today falls in the reference season.
+        assert c.post("/api/settings", json={"horizon": "all"}).status_code == 200
         yield c
 
 

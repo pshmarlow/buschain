@@ -52,7 +52,11 @@ def test_locked_assignment_still_feeds_the_next_hop():
     assert result.plan.chains[0].links[0].supply == first.id
 
 
-# -- the horizon ------------------------------------------------------------
+# -- the two ends of the planning window ------------------------------------
+#
+# as_of is the near end (trips already under way), horizon the far one (trips
+# too far out to commit a bus to). Both are dates the caller passes: the engine
+# never reads a clock, which is what lets these tests name an exact day.
 
 def test_as_of_excludes_trips_already_started():
     supply = mk_trip("STO", "OSL", 0, 2, company="ollex", unit=1)
@@ -64,6 +68,39 @@ def test_as_of_excludes_trips_already_started():
     # a trip beginning today is already someone's problem for today.
     result = engine.evaluate(report, REG, as_of=BASE + timedelta(days=4))
     assert started.id not in result.plan.covered
+
+
+def test_horizon_excludes_trips_too_far_out_and_counts_them():
+    supply = mk_trip("STO", "OSL", 0, 2, company="ollex", unit=1)
+    near = mk_trip("OSL", "STO", 4, 6)
+    far = mk_trip("OSL", "STO", 10, 12)
+    report = report_of(supply, near, far)
+
+    unbounded = engine.evaluate(report, REG)
+    assert unbounded.plan.covered == {near.id, far.id}
+    assert unbounded.beyond_horizon == 0
+
+    result = engine.evaluate(report, REG, horizon=BASE + timedelta(days=7))
+    assert result.plan.covered == {near.id}
+    # Out of the plan AND out of every other derived list — one switch.
+    assert far.id not in result.suggestions_by_trip
+    assert far.id not in result.reachable
+    # Counted, not silently dropped: an empty plan has to be able to say why.
+    assert result.beyond_horizon == 1
+
+
+def test_horizon_includes_a_trip_starting_on_the_cutoff():
+    """Inclusive, unlike as_of. "Plan a month ahead" has to mean the trip on
+    day 30 is in — the alternative is a window one day shorter than its label,
+    which nobody can see and everybody would miscount."""
+    supply = mk_trip("STO", "OSL", 0, 2, company="ollex", unit=1)
+    on_the_line = mk_trip("OSL", "STO", 4, 6)
+    report = report_of(supply, on_the_line)
+
+    result = engine.evaluate(report, REG, horizon=BASE + timedelta(days=4))
+    assert result.plan.covered == {on_the_line.id}
+    assert engine.evaluate(
+        report, REG, horizon=BASE + timedelta(days=3)).plan.covered == frozenset()
 
 
 # -- what a re-chain may release --------------------------------------------
@@ -99,6 +136,31 @@ def test_canceled_assignments_are_never_released():
     canceled = mk_trip("STO", "OSL", 5, 6, company="ollex", unit=1,
                        status=Status.CANCELED)
     assert _build(report_of(canceled)).released == ()
+
+
+def test_never_releases_what_the_horizon_puts_out_of_replanning():
+    """The fifth boundary, and the one that is a correctness rule rather than a
+    policy: the horizon bounds evaluate's demand, so releasing an assignment
+    past the cutoff would hand the trip to a planner that cannot see it. It
+    would strand every time — a bus taken off a trip and never given back."""
+    anchor = mk_trip("STO", "OSL", -5, -3, company="ollex", unit=1)
+    inside = mk_trip("OSL", "STO", 1, 3, company="ollex", unit=1)
+    outside = mk_trip("OSL", "STO", 30, 32, company="vilneda", unit=1)
+    report = report_of(anchor, inside, outside)
+
+    result = rechain.build(
+        report, REG, (), system_assigned={inside.id, outside.id},
+        as_of=BASE, horizon=BASE + timedelta(days=7), reposition=False)
+
+    assert result.released == (inside.id,)
+    assert result.frozen_horizon == 1
+    # The whole point: `outside` keeps the bus it has.
+    assert result.stranded == ()
+
+    # And the counters still partition the future assignments they describe,
+    # the property the panel's "Untouched:" arithmetic depends on.
+    assert (len(result.released) + result.frozen_horizon
+            + result.frozen_source + result.frozen_locked) == 2
 
 
 def test_released_trip_is_replanned_onto_a_bus():

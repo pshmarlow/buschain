@@ -62,7 +62,10 @@ Strict one-way layering; each boundary is a design decision, not a habit:
   export plan is exactly the `cell_overrides` table: a cell nobody touched is
   never spliced.
 - **`engine/`** — pure: `evaluate(report, registry, accepted, …) →
-  EngineResult`, no I/O, no clock (`as_of` is passed in). Everything it
+  EngineResult`, no I/O, no clock (both ends of the planning window, `as_of`
+  and `horizon`, are passed in as dates — never as "N days from now", which
+  would put a now-relative number inside modules of trip-to-trip predicates).
+  Everything it
   returns is derived state, recomputed fully on every mutation and never
   persisted — that is what keeps provisional plans out of the export.
   `graph.feasible_edges` is the rulebook (windows, Y/N constraints, timeline
@@ -70,9 +73,14 @@ Strict one-way layering; each boundary is a design decision, not a habit:
   `solve.py` solves it exactly (CBC) as an on-demand preview-commit action
   whose result is certified by replaying every link through `feasible_edges`.
   `rechain.py` never plans: it strips releasable assignments and re-runs the
-  ordinary `evaluate` — one planner, one rule set.
+  ordinary `evaluate` — one planner, one rule set, and it must never release a
+  trip the horizon hides from that replan. `adhoc.py` does the same
+  for cancellable ad hoc hires (rule 11), and `parked.py` only reports:
+  mid-chain idle windows and the fits `insertion_ok` would allow there —
+  listed, never planned.
 - **`store/`** — all reads/writes (SQLite, WAL). Undo is a snapshot of
-  overrides/links/locks/deletions taken BEFORE the action, not an inverse
+  overrides/links/locks/deletions/manual rows/company naming taken BEFORE the
+  action, not an inverse
   operation; wrap mutations in `repo.undoable(label)` and they become
   undoable for free. A `threading.RLock` serializes mutations across
   FastAPI's threadpool; compound registry operations call the `_`-prefixed
@@ -85,7 +93,8 @@ Strict one-way layering; each boundary is a design decision, not a habit:
   refetches the whole `/state` after every mutation and only renders — the
   server is the single source of truth, and previews (re-chain, optimize) are
   recomputed server-side on commit so a stale browser can never write a stale
-  plan. `static/rules.js` holds the browser's copy of the window arithmetic,
+  plan. The board's drag previews targets via `drop_targets` and commits via
+  `/reassign`, which re-derives the chain link server-side. `static/rules.js` holds the browser's copy of the window arithmetic,
   pinned to `graph.py`'s boundaries by `tests/unit/test_rules_js.py`.
 
 ## Conventions that are easy to break
@@ -104,4 +113,5 @@ Strict one-way layering; each boundary is a design decision, not a habit:
   (`tests/acceptance/` = the brief's AT1–AT7; unit tests carry the rationale
   in their names/docstrings). AT1 byte-identity is the tripwire for any
   codec change.
-- This directory is not a git repository. Back up before sweeping changes.
+- This directory is a git repository with a GitHub remote (`origin`). Branch
+  before sweeping changes; commit or push only when asked.

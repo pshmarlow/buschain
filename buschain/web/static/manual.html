@@ -58,6 +58,15 @@
   <li><strong>Export</strong> the xlsx back out and send it on.</li>
 </ol>
 
+<p>
+  Six tabs carry the whole app: <em>Data</em> (the sheet itself, and every
+  correction you make), <em>Suggestions</em> (the plan in words, with the
+  accept controls and the bulk actions), <em>Timelines</em> (the same plan as
+  a calendar), <em>Worklist</em> (assignments broken by a cancellation),
+  <em>Registry</em> (which companies, buses and cities exist), and
+  <em>Manual</em> — this text.
+</p>
+
 <h3>Three promises worth knowing up front</h3>
 
 <dl class="manual-dl">
@@ -409,6 +418,13 @@
   timeline. Mid-chain it would arrive in the wrong city for whatever comes
   after, stranding it.
 </p>
+<p>
+  The cost of this rule is a blind spot: a bus can sit idle for weeks
+  <em>mid</em>-timeline — a far-off committed trip pinning the end of its
+  row — and the planner will propose nothing for it. Those blocks are
+  enumerated in the <em>Parked buses</em> panel (chapter 7.9), where placing
+  a trip into one is a decision you make, priced in empty-run days.
+</p>
 
 <h3>4.7 One new link per bus per planning round</h3>
 <p>
@@ -508,9 +524,17 @@
   because it is the one cell that assigns a bus:
 </p>
 <ul>
-  <li><strong>Suggested</strong> — units the engine itself proposes for this trip. These passed every rule.</li>
-  <li><strong>Busy</strong> — units already carrying a trip that overlaps these dates (hover to see which trip).</li>
-  <li><strong>Other</strong> — everything else in the registry.</li>
+  <li><strong>Buses — the engine suggests these</strong> — units the planner
+      itself proposes for this trip. These passed every rule.</li>
+  <li><strong>Buses — free on these dates</strong> — no clash, but not
+      proposed either: the placement breaks a chaining rule the planner will
+      not bend, or the bus is simply spent elsewhere in the plan.</li>
+  <li><strong>Buses — busy on these dates</strong> — already carrying a trip
+      that overlaps this one (hover to see which trip).</li>
+  <li><strong>Ad hoc — company only, no unit (never chains)</strong> — the
+      bare-company entries, in their own group because they never chain. A
+      “must use X” trip with no chainable X bus highlights its mandated
+      company here — rule 3's fallback.</li>
 </ul>
 <p>
   Typing in that picker only <em>filters</em> the list; it never becomes the
@@ -602,7 +626,9 @@
   another. It names the action it will reverse.
 </p>
 <ul>
-  <li>50 steps deep, per dataset.</li>
+  <li>50 steps deep, per dataset. Importing replaces the dataset and starts a
+      fresh history — nothing from before an import can be undone, so export
+      anything you may still want before importing over it.</li>
   <li>Batch actions (a paste, a bulk delete, an accepted chain, a re-chain, an
       applied optimization) are <strong>one</strong> step each.</li>
   <li>There is no redo. Undo itself is not undoable.</li>
@@ -667,7 +693,7 @@
 <p>
   With empty runs <strong>off</strong>, a bus can only take a trip departing from
   the city it last arrived in. That is a much smaller world: on the reference
-  dataset it takes the plan from 108 links to 60, and most of the fleet ends up
+  dataset it takes the plan from 113 links to 60, and most of the fleet ends up
   parked where nothing departs. If the plan comes back empty, the app says so
   explicitly rather than letting the setting look like a broken engine.
 </p>
@@ -706,8 +732,9 @@
       hoc…</em> below.</li>
 </ol>
 <p>
-  The panel states how many were frozen by each rule, so “only 60 of 448 future
-  trips were in play” reads as the boundaries working rather than as a bug.
+  The panel states how many assignments each rule froze, so a small releasable
+  number against hundreds of future trips reads as the boundaries working
+  rather than as a bug.
 </p>
 <p class="manual-warn">
   <strong>Read the stranded count before applying.</strong> Releasing N
@@ -751,7 +778,7 @@
   written until you press Apply, and the panel tells you how many of the hires
   came from the spreadsheet. The deadline binds this button, not you: you can
   still clear the Company cell on the Data tab, or drag the bar to the Uncovered
-  lane, at any time.
+  lane (chapter 7.6), at any time.
 </p>
 <p>
   The panel also names the trips the <em>current</em> plan proposes and this one
@@ -870,6 +897,8 @@
   <li>Click a bar to select it; <kbd>Esc</kbd> clears; <kbd>d</kbd> jumps to that
       trip's row on the Data tab (clearing the Data filters if they were hiding
       it, and saying so).</li>
+  <li>Drag a bar to move it — sideways for its dates, up or down for a
+      different bus (7.6).</li>
   <li>Click an empty part of the board to deselect.</li>
 </ul>
 
@@ -911,18 +940,70 @@
   “show all” link.
 </p>
 
-<h3>7.6 Assigning by hand (both escape hatches)</h3>
+<h3>7.6 Moving a trip by dragging it</h3>
 <p>
-  Both hatches — bus-for-a-trip and trip-for-a-bus — are deliberately
-  <strong>not</strong> filtered to legal options. When the planner has nothing to
-  offer is exactly when a human needs to place a bus, and an app that refuses to
-  let you say what you have decided is worse than one that records it and
-  reports the consequences.
+  Every bar on the board can be picked up. The first few pixels of movement
+  decide what the drag means, and the two gestures never mix:
 </p>
-<p>So a hand assignment:</p>
+<ul>
+  <li><strong>Sideways</strong> moves the trip's <em>dates</em>. A preview
+      follows the bar (<em>“+3d — moves the trip's dates in the sheet; the
+      span is unchanged”</em>), and dropping writes Start and End together as
+      one edit — one undo step. It is the same change as typing new dates on
+      the Data tab, made where you can see the neighbours it has to fit
+      between.</li>
+  <li><strong>Up or down</strong> moves the trip to another <em>bus</em>.
+      Every row that may legally take it lights up. Hold the bar over a row
+      and the note under the pointer says what the drop would do — chains
+      after which trip on how many free days, needs an empty run to get
+      there first, lands first on this bus, or leaves the bus parked further
+      than a chain reaches. A row that refuses says why, in the engine's own
+      words.</li>
+</ul>
+<p>
+  Three landing places behave differently:
+</p>
+<ul>
+  <li><strong>A bus's row</strong> assigns the trip to that bus. When the
+      placement is a rule-1 handover, the drop records the chain link too —
+      the server rechecks the rules and derives the link itself, so a stale
+      board can never write a stale chain. A drop further out than a chain
+      reaches records the assignment alone, with no connector.</li>
+  <li><strong>A company's ad hoc lane</strong> books “some further bus from
+      their yard”: it chains to nothing and generates no supply.</li>
+  <li><strong>The Uncovered row</strong> takes the bus off the trip. If the
+      bus came from the spreadsheet, the note warns you first: the export
+      will carry a blank where the sheet named one.</li>
+</ul>
+<p class="manual-note">
+  <strong>The drag refuses the impossible; the hatches allow the merely
+  unwise.</strong> A drop is offered only where no hard rule breaks — a bus
+  running two trips at once, a departure it cannot physically reach, a
+  company or party-size constraint. For deliberate overrides — “I know the
+  window is blown, do it anyway” — use the escape hatches in 7.7, which
+  exist precisely for that.
+</p>
+<p>
+  <kbd>Esc</kbd> cancels a drag in progress and the bar goes back where it
+  was.
+</p>
+
+<h3>7.7 Assigning by hand (the two escape hatches)</h3>
+<p>
+  The two pickers — <em>Assign by hand</em> on an uncovered trip's panel
+  (bus-for-a-trip) and the override lists on a bus's panel (trip-for-a-bus,
+  7.5) — are deliberately <strong>not</strong> filtered to legal options.
+  When the planner has nothing to offer is exactly when a human needs to
+  place a bus, and an app that refuses to let you say what you have decided
+  is worse than one that records it and reports the consequences. That is
+  the opposite stance from the drag (7.6), which offers only legal landings:
+  the drag is for routine moves, the hatches for deliberate overrides.
+</p>
+<p>So a hand assignment from either panel:</p>
 <ul>
   <li>is written immediately and appears in the export;</li>
-  <li>records no chain link, so no connector is drawn;</li>
+  <li>records no chain link, so no connector is drawn — unlike a drag that
+      lands as a rule-1 handover, which records one;</li>
   <li>shows up in the <em>integrity findings</em> as a gap out of window or a
       city mismatch, rather than being blocked;</li>
   <li>is a single undo step.</li>
@@ -933,7 +1014,7 @@
   board.
 </p>
 
-<h3>7.7 Locking a trip</h3>
+<h3>7.8 Locking a trip</h3>
 <p>
   The <em>Lock</em> button on the selected trip's panel means <strong>“do not
   re-decide this”</strong>:
@@ -952,7 +1033,7 @@
   unlocking happens on the panel you reach by clicking the bar.
 </p>
 
-<h3>7.8 What the banners and panels below the board tell you</h3>
+<h3>7.9 What the banners and panels below the board tell you</h3>
 <dl class="manual-dl">
   <dt>Capacity note</dt>
   <dd>
@@ -983,9 +1064,24 @@
     </ul>
     Findings are always listed, never auto-fixed.
   </dd>
+  <dt>Parked buses</dt>
+  <dd>
+    Buses idle <em>mid</em>-timeline for longer than any chain window —
+    usually a far-off committed trip pinning the end of the row. The planner
+    cannot propose into these blocks (empty runs only run off the end of a
+    chain, 4.6), so the panel lists what a person could do instead: every
+    uncovered trip that would fit, cheapest first, each badged with the
+    empty driving it costs (<em>“2 days empty”</em>, or <em>“no drive”</em>
+    when the trip departs from where the bus already stands) and how many
+    days after the bus lands it departs. A fit deeper than the chain window
+    adds <em>“records no link”</em> — placing it is an assignment, not a
+    chain. Click a fit to see the trip on the board; placing it is the
+    ordinary drag (7.6). Windows with nothing to offer are still listed — a
+    bus parked for six weeks is worth knowing about even when no trip fits.
+  </dd>
 </dl>
 
-<h3>7.9 Why is this bus idle?</h3>
+<h3>7.10 Why is this bus idle?</h3>
 <p>
   Hover a unit's row label. Marked rows carry a diagnosis, and the distinction
   worth knowing is:
@@ -1024,9 +1120,12 @@
 </p>
 <p>
   <strong>Unassign &amp; re-suggest</strong> frees the trip so the planner
-  proposes it again. If the assignment came from your source file, the button is
-  replaced by a note: that is source data, so it is resolved in Excel or by
-  changing the status — the app will not overwrite what the sheet said.
+  proposes it again. When the assignment came from your source file the button
+  says so instead — <strong>Clear sheet's bus &amp; re-suggest</strong> — and
+  spells out the consequence: the export will carry a blank Company cell where
+  the sheet named a bus. Undo reverses it either way. (Automation is held to a
+  stricter rule: a re-chain only ever releases assignments the app itself
+  wrote.)
 </p>
 <p>
   “No broken chains” is the normal, healthy state.
@@ -1065,7 +1164,10 @@
       non-operable, which is the reason the rename touches the trips at all
       rather than the registry alone. One <em>Undo</em> reverses all of it.</li>
   <li><strong>+ unit</strong> adds a numbered bus; the <code>×</code> on a chip
-      removes one.</li>
+      removes one. Removal is refused while live trips still name that unit —
+      the refusal lists them (up to five) — because a unit that stops
+      resolving would silently drop its rows out of the operable set.
+      Reassign those trips first.</li>
   <li><strong>Fleet</strong> is not editable, because it is simply the number of
       units. One number cannot disagree with itself — change the fleet by adding
       or removing buses. (The sheet's <em>Fleets</em> column still owns the
@@ -1133,8 +1235,10 @@
   <li>any cell you edited in the app, in its own column;</li>
   <li>trips you added, appended as new rows;</li>
   <li>rows you deleted, dropped;</li>
-  <li>fleet counts and the Nationality/OP lists on the Information sheet, if
-      they differ from what the sheet holds.</li>
+  <li>fleet counts and the Cities / Nationality / OP list columns on the
+      Information sheet, if they differ from what the sheet holds;</li>
+  <li>a company rename, carried into every row that names the company and
+      into the Information sheet's company column (chapter 9.2).</li>
 </ul>
 <p>
   Everything else — formatting, comments, formulas, the legacy grid,
@@ -1143,9 +1247,9 @@
 </p>
 <p class="manual-note">
   <strong>The one non-identical export.</strong> If your workbook predates the
-  Nationality/OP list columns, the <em>first</em> export creates them (and their
-  headers) on the Information sheet. Every export after that is byte-identical
-  again, because the file is then a fixed point.
+  Cities / Nationality / OP list columns, the <em>first</em> export creates
+  them (headers included) on the Information sheet. Every export after that is
+  byte-identical again, because the file is then a fixed point.
 </p>
 
 <h3>10.2 Export csv</h3>
@@ -1276,16 +1380,20 @@
   <dt>A bus stops halfway across the board and never takes another trip.</dt>
   <dd>Hover its row label. It is <em>done</em>, <em>booked</em> or
       <em>stranded</em> — and if it is stranded, no order of accepts will help
-      (chapter 7.9).</dd>
+      (chapter 7.10).</dd>
 
-  <dt>I cannot unassign a trip.</dt>
-  <dd>Its company name came from your source file. The app does not overwrite
-      source data: change it on the Data tab (which records an edit), or in
-      Excel.</dd>
+  <dt>Can I take a bus off a trip the spreadsheet assigned?</dt>
+  <dd>Yes — you, deliberately: clear the Company cell on the Data tab, use the
+      Worklist's <em>Clear sheet's bus &amp; re-suggest</em>, or drag the bar
+      to the Uncovered lane (chapter 7.6). The export then carries a blank
+      where the sheet named a bus, and Undo puts it back. What may
+      <em>not</em> do this is automation: a re-chain only ever releases
+      assignments the app itself wrote.</dd>
 
-  <dt>Re-chain says it will only release 60 of hundreds of future trips.</dt>
-  <dd>That is the three release boundaries doing their job — source-file
-      assignments, trips already started, and locked trips are all frozen. The
+  <dt>Re-chain says it will only release a fraction of the future trips.</dt>
+  <dd>That is the four release boundaries doing their job — source-file
+      assignments, trips already started, locked trips, and ad hoc bookings
+      (those are <em>Reclaim</em>'s business, chapter 6.7) are all frozen. The
       panel breaks the number down.</dd>
 
   <dt>I applied a re-chain and coverage went <em>down</em>.</dt>
@@ -1337,6 +1445,7 @@
   <tr><td><kbd>Enter</kbd></td><td>An open cell editor</td><td>Save</td></tr>
   <tr><td><kbd>Esc</kbd></td><td>An open cell editor</td><td>Cancel the edit</td></tr>
   <tr><td><kbd>Esc</kbd></td><td>Timelines, bar selected</td><td>Clear the selection</td></tr>
+  <tr><td><kbd>Esc</kbd></td><td>Timelines, drag in progress</td><td>Cancel the drag — the bar goes back</td></tr>
   <tr><td><kbd>d</kbd></td><td>Timelines, bar selected</td><td>Jump to that trip's row on the Data tab</td></tr>
   <tr><td><kbd>Shift</kbd>-click</td><td>A row tick</td><td>Tick the whole visible range from your last tick</td></tr>
 </table>
@@ -1348,6 +1457,7 @@
   <tr><td><em>empty run CPH→STO</em></td><td>This link needs the bus driven over empty first.</td></tr>
   <tr><td><em>depends on n Pending trips</em></td><td>Hover for the list. If one cancels, this breaks.</td></tr>
   <tr><td><em>the plan's choice</em></td><td>What the planner allocated here. Not “the best” — it solves all trips together, so a cheaper-looking option may simply have been spent elsewhere.</td></tr>
+  <tr><td><em>2 days empty</em> / <em>no drive</em></td><td>The empty driving a parked-window fit would cost (chapter 7.9).</td></tr>
   <tr><td><em>🔒 Locked</em></td><td>Held out of all chaining; a re-chain will not release it.</td></tr>
 </table>
 
@@ -1365,6 +1475,7 @@
   <dt>Locked</dt><dd>A trip the planner must not re-decide. It stays on its timeline and still feeds the next hop.</dd>
   <dt>Non-operable</dt><dd>A row that failed the data contract. Listed with reasons, exported untouched, not plannable until fixed.</dd>
   <dt>Numbered unit</dt><dd>A physical bus, e.g. <code>Ollex 1</code>. The only thing that chains.</dd>
+  <dt>Parked window</dt><dd>A stretch where a bus sits idle between two committed trips for longer than any chain window. Invisible to the planner (empty runs are tail-only), so listed in the Parked buses panel instead.</dd>
   <dt>Provisional</dt><dd>Computed, shown, never stored and never exported.</dd>
   <dt>Reachable</dt><dd>Some sequence of accepts could chain into this trip without any empty run. Ignores whether a bus is free.</dd>
   <dt>Stranded</dt><dd>A bus parked where nothing it can reach departs from, so no accept in any order can put it back to work.</dd>

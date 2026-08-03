@@ -70,7 +70,7 @@ link, or the entire plan); *auto* keeps the plan live on the board without
 them. Two objectives — *most trips covered* or *fewest idle days*; switching
 replans. **Empty runs** can be switched off, which restricts every proposal —
 chains, one-hop candidates, board ghost slots alike — to trips departing from
-the city the bus last arrived in; on the reference dataset that is 108 links
+the city the bus last arrived in; on the reference dataset that is 113 links
 down to 60. Either way nothing is written until you accept, and provisional
 links never appear in an export. **Optimize coverage…** runs the exact solver
 over the same rules (a few seconds) and previews the best achievable plan next
@@ -79,7 +79,15 @@ more empty runs, which the preview states before you apply.
 
 On the **Timelines** board, selecting a bar opens its panel; **Show in Data**
 (shortcut: `d`) jumps to that trip's row in the Data tab, clearing the Data
-filters first if they were hiding it.
+filters first if they were hiding it. Bars can be dragged — sideways to move a
+trip's dates, up or down to move it to another bus or take one off — and below
+the board three panels report fleet over-commitment, unit-integrity findings,
+and **Parked buses**: units idle mid-chain longer than any chain window, with
+the uncovered trips a drop could put there and the empty-run days each would
+cost. Back on **Suggestions**, **Re-chain future…** and **Reclaim from ad
+hoc…** are the two bulk actions, both preview-first. The **Worklist** tab
+collects assignments broken by a cancellation, and the last tab is the
+built-in **Manual**.
 
 State lives in `buschain.db` (SQLite), created in **whatever directory you
 start the server from** — not next to the package. Start it somewhere else and
@@ -113,7 +121,7 @@ web  →  store  →  codecs  →  model
 | `buschain/model.py` | frozen dataclasses/enums; zero I/O |
 | `buschain/normalize.py` | the four allowed normalizations, nothing else |
 | `buschain/contract.py` | one home for validation: raw row → Trip \| NonOperableRow(reasons) |
-| `buschain/engine/` | pure `evaluate(report, registry, accepted, objective, reposition, locked, as_of) → EngineResult`; greedy ranking + multi-hop chain planning over a feasible-link graph, plus `solve.py`: the same graph handed to an exact solver (CBC, optional `.[solver]` extra) behind the on-demand **Optimize coverage…** action |
+| `buschain/engine/` | pure `evaluate(report, registry, accepted, objective, reposition, locked, as_of) → EngineResult`; greedy ranking + multi-hop chain planning over a feasible-link graph, plus `solve.py`: the same graph handed to an exact solver (CBC, optional `.[solver]` extra) behind the on-demand **Optimize coverage…** action; `parked.py` enumerates the mid-chain idle windows the tail-only rule hides (listed, never planned) |
 | `buschain/codecs/` | xlsx/csv importers + exporters behind neutral shapes (`ImportedDataset` in, `ExportPlan` out); swap/add codecs without touching anything else |
 | `buschain/store/` | SQLite; the only mutable state — every mutation re-runs the engine |
 | `buschain/web/` | thin FastAPI JSON API + one static page (6 tabs; the last, **Manual**, is `static/manual.html` — prose fetched on first open, rendering nothing from state) |
@@ -131,6 +139,12 @@ Key decisions worth knowing before editing:
   verbatim and overlays status/assignment strings at load time, so they are
   re-validated by the same contract as imported data and exported exactly
   as stored.
+- **Deleting a row is soft, and undo is a snapshot.** A deleted row leaves the
+  working set and the export, but its content stays so the deletion reverses
+  like everything else. Undo is one shared 50-step history per dataset — a
+  snapshot of overrides/links/locks/deletions/manual rows/company naming taken
+  *before* each action, not an inverse operation — and an import starts a
+  fresh history: nothing from before it is undoable.
 - **Importing keeps the last five workbooks, not all of them.** An import does
   not delete the dataset it replaces — it flips `active` and inserts a new one —
   and every xlsx import also banks a verbatim copy of the workbook in `blobs`.
@@ -349,8 +363,9 @@ Key decisions worth knowing before editing:
   (`repo.system_assigned_ids`, and only where the imported cell was blank — an
   override sitting *on top* of a sheet value would not free the trip, it would
   restore the sheet's); only trips that have **not started yet**; and never a
-  locked one. On the reference data that is 60 releasable against 250 future
-  assignments the planner will not touch. This is a rule about **automation**,
+  locked one. On the reference data with the full plan accepted (measured
+  2026-08) that is 113 releasable, with 56 future source-file assignments —
+  and every ad hoc booking — left untouched. This is a rule about **automation**,
   not about who may edit what: a person can retype or clear an imported bus
   from the Data tab, and (since the drag) from the board — both write the same
   Company-cell override, and clearing one exports a blank where the sheet named
@@ -400,10 +415,33 @@ Key decisions worth knowing before editing:
   has to think to derive, and the UI states it before the gains. Applying is one
   transaction and one undo step: a half-applied re-chain would be assignments
   taken back with nothing put in their place.
-- **Today's date enters at the web layer, never in the engine.** The horizon is
-  an explicit `as_of` argument. A planner that consulted `date.today()` itself
+- **Today's date enters at the web layer, never in the engine.** Both ends of
+  the planning window are explicit `as_of` / `horizon` arguments, and both are
+  dates rather than day counts. A planner that consulted `date.today()` itself
   would stop being a pure function of its inputs — the same state would produce
   different plans on different days and no test could pin either.
+- **The planner only commits a month ahead, and that is a setting.** *Plan
+  ahead* (2 weeks / 1 month / 3 months / All, stored as `plan_horizon`,
+  default a month) bounds how far out the engine will decide anything: an
+  unbounded planner ties buses to work months out on a schedule still being
+  edited, while rule 11 gives only 21 days to cancel a hire. One filter in
+  `_split`, so it reaches the chains, the one-hop candidates, reachability, the
+  parked fits and the exact solve together — but never the board drag or the
+  assign pickers, which are manual escape hatches. Three things follow that are
+  not obvious. **It cuts demand only:** a bus that finished before the window
+  opened is still supply, or the first trips in the window would be unreachable
+  for no reason. **A re-chain must not release past the cutoff**, because the
+  replan cannot see those trips and would strand every one of them — the fifth
+  release boundary, and the only one that is a correctness rule rather than a
+  policy. **Below 21 days the reclaim goes dead**, since nothing is both far
+  enough out to cancel and near enough to plan; `frozen_horizon` is counted
+  apart from `frozen_notice` so the panel says which rule bit. Unlike the
+  empty-runs switch this default *does* change an existing database on upgrade,
+  which is the feature rather than an oversight — and on the reference workbook
+  (measured 2026-08-02, a season starting 27 days out) it is the difference
+  between 113 covered trips and 0, so the resolved cutoff date and the count of
+  trips beyond it are printed next to the plan. An empty board that cannot say
+  why reads as a broken engine.
 - **One planned link per unit per round.** Edges are validated against a unit's
   timeline as it stood at round start, so taking two for the same bus in one
   round can land overlapping trips on it. Removing this rule produced 132 new
@@ -419,6 +457,19 @@ Key decisions worth knowing before editing:
   Coverage went 0 → 51 of 131 trips for 28 empty runs. There are no distances in
   the registry, so the model cannot price a run — "fewest, last resort" is the
   only defensible policy until it can.
+- **A parked bus is surfaced, never planned.** The tail-only rule above has a
+  blind spot: one far-future committed trip pins the end of a unit's timeline,
+  so the bus can idle for weeks mid-chain and the planner proposes nothing —
+  measured on live data, one unit sat parked 56 days behind a single
+  source-file assignment while six uncovered trips fit inside the block, every
+  one already a legal board drop. `engine/parked.py` enumerates those windows
+  (consecutive committed pairs wider than `min_gap_days + MAX_REST_DAYS`) with
+  the fitting uncovered trips, priced in empty-run days and ranked
+  cheapest-drive-first, on the board's **Parked buses** panel. Widening the
+  planner instead was measured and rejected: ~1 extra covered trip, bought by
+  auto-proposing *double* empty runs (out and back) the model cannot price —
+  against the policy above. `insertion_ok` stays the one legality gate; the
+  panel lists, a person drags.
 - **Last resort takes a deferral, not just a sort.** Ranking places same-city
   edges first, but the one-per-unit rule can spend a demand's same-city bus on an
   earlier demand — and the loop then reaches that demand with only its empty run

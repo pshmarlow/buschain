@@ -77,6 +77,33 @@ def test_a_blank_pax_hire_is_still_cancellable():
     assert _build(report_of(hired)).eligible == (hired.id,)
 
 
+def test_a_hire_past_the_horizon_is_out_of_scope_not_out_of_time():
+    """The two date rules are counted apart because they mean opposite things:
+    the notice is the supplier's deadline and cannot be argued with, the
+    horizon is a window the dispatcher chose and can widen."""
+    inside = mk_trip("OSL", "STO", 25, 26, company="ollex")
+    outside = mk_trip("OSL", "STO", 60, 61, company="ollex")
+    too_soon = mk_trip("OSL", "STO", 3, 4, company="ollex")
+    report = report_of(inside, outside, too_soon)
+
+    result = _build(report, horizon=BASE + timedelta(days=30))
+    assert result.eligible == (inside.id,)
+    assert (result.frozen_notice, result.frozen_horizon) == (1, 1)
+
+
+def test_a_horizon_inside_the_notice_period_leaves_nothing_eligible():
+    """Not a bug, but arithmetic worth pinning: with the window ending before
+    the cancellation deadline, every hire is either too close to cancel or too
+    far to plan. The counters have to keep saying which, or the panel can only
+    show an empty list and no reason."""
+    a = mk_trip("OSL", "STO", 5, 6, company="ollex")     # inside notice
+    b = mk_trip("OSL", "STO", 40, 41, company="ollex")   # past the horizon
+    result = _build(report_of(a, b), horizon=BASE + timedelta(days=14))
+
+    assert result.eligible == ()
+    assert (result.frozen_notice, result.frozen_horizon) == (1, 1)
+
+
 def test_eligibility_does_not_ask_who_wrote_the_cell():
     """The carve-out from the source-data boundary, asserted rather than
     described: an imported hire is as cancellable as one this app booked, and

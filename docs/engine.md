@@ -3,8 +3,8 @@
 How `buschain/engine/` decides which bus can take which trip, and how it strings
 those decisions into chains. Written for the maintainer: plain language first,
 code pointers second. Rule numbers refer to `bus-chaining-build-brief.md`.
-
-https://claude.ai/code/artifact/d2953d15-5464-4cee-a5f4-5b6442da750b
+Code pointers name symbols rather than line numbers where they can — three
+separate commits have invalidated cited lines before.
 
 ---
 
@@ -36,14 +36,15 @@ suggestion, plan, and warning in milliseconds.
 | **Empty run / reposition** | Driving a bus with no passengers to a *different* city to start its next trip. A real cost the model can't price (no distances), so it's always last resort. |
 | **ER** | The source sheet's explicit empty-run mark. Read-only — honored, never written. |
 | **Locked** | A trip the planner must not re-decide. It stays on its unit's timeline and still feeds the next hop; it just leaves the demand set. |
+| **Parked window** | A consecutive committed pair wider than any chain window — the bus idles mid-chain. Invisible to the planner (Gate 4 makes cross-city moves tail-only), so `parked.py` enumerates it for a human instead. |
 
 ## 3. The pipeline: what `evaluate()` does
 
-`evaluate()` (`buschain/engine/__init__.py:21`) is the single entry point and a
+`evaluate()` (`buschain/engine/__init__.py`) is the single entry point and a
 pure function: `(contract report, registry, accepted links, objective,
-reposition, locked, as_of) → EngineResult`. No files, no clock, no database —
-which is why every mutation elsewhere in the app is simply "change state,
-re-run evaluate", with zero cache-invalidation logic anywhere.
+reposition, locked, as_of, horizon) → EngineResult`. No files, no clock, no
+database — which is why every mutation elsewhere in the app is simply "change
+state, re-run evaluate", with zero cache-invalidation logic anywhere.
 
 ```
 report.trips
@@ -52,18 +53,21 @@ report.trips
 live trips ──┬─ assigned to numbered unit ──► SUPPLY + per-unit timelines
              ├─ assigned to bare company ──► ad hoc lists (chain-invisible)
              └─ unassigned, not locked,   ──► DEMAND
-                starts after as_of
+                starts after as_of,
+                starts on or before horizon
   ▼
 graph.feasible_edges(supply, demand, timelines)     ← the rules live here
   ├──► suggest.build_suggestions  → ranked one-hop candidates, both directions
   ├──► plan.build_plan            → multi-hop provisional chains
   ├──► reach.reachable_demands    → "could any chain ever get here?"
-  └──► checks.*                   → integrity findings, fleet warnings, broken chains
+  ├──► checks.*                   → integrity findings, fleet warnings, broken chains
+  └──► parked.windows             → mid-chain idle windows + the trips that fit them
+                                    (via insertion_ok — same rules, asked the drop's way)
 ```
 
 The supply/demand reading itself lives in `_split`
-(`buschain/engine/__init__.py:80`), shared by `evaluate()` and the exact
-solver's entry point `optimal_plan()` (`__init__.py:113`) so the two can never
+(`buschain/engine/__init__.py`), shared by `evaluate()` and the exact
+solver's entry point `optimal_plan()` (same module) so the two can never
 disagree about what is in play. `optimal_plan` is deliberately *not* part of
 `evaluate()` — see the solver section below.
 
@@ -74,29 +78,63 @@ The `EngineResult` fields, and who they're for:
 - `plan` — the multi-hop proposal panel. Provisional by construction.
 - `reachable` — lets the board distinguish "waiting on an earlier decision"
   from "no chain will ever reach this".
+- `parked` — the Timelines tab's **Parked buses** panel: units idle mid-chain
+  longer than any chain window, with the uncovered trips a manual drop could
+  put there and each fit's empty-run day cost (`parked.py`). Listed, never
+  proposed — the planner's cross-city moves are tail-only, so these blocks
+  are exactly what it cannot see.
 - `integrity`, `fleet_warnings`, `broken_chains` — reports. Listed, never
   auto-fixed (rules 4–6).
 - `timelines`, `adhoc_by_company` — display.
+- `beyond_horizon` — how many uncovered trips the horizon put out of scope, so
+  a UI can tell "the fleet can do nothing" from "you are not looking there yet".
 
 (Canceled trips are dropped inside `_split` — rule 7: excluded from matching,
 retained for audit and as broken-chain roots.)
 
-Two parameters keep purity honest: `as_of` is *passed in* (an engine that read
+Three parameters keep purity honest. `as_of` and `horizon` are the two ends of
+the planning window and are both *passed in* as dates (an engine that read
 `date.today()` would give different answers on different days for the same
-state, untestable), and `reposition` reaches **both** the edges and the plan —
-one switch, so the suggestion board and the planner can't disagree about
-whether empty runs exist.
+state, untestable). `reposition` reaches **both** the edges and the plan — one
+switch, so the suggestion board and the planner can't disagree about whether
+empty runs exist.
+
+### The planning horizon
+
+`horizon` is how far ahead the planner may commit a bus, stored as the
+`plan_horizon` setting (`14` / `30` / `90` / `all`, default `30`) and resolved
+to a date by `web/api.py:_horizon` — today + N. The engine only ever sees the
+resolved date, deliberately: a now-relative day count loose in a module of
+trip-to-trip predicates is one refactor away from being read as a gap, the same
+argument that keeps `ADHOC_CANCEL_NOTICE_DAYS` out of `graph.py`.
+
+It cuts **demand only**, in `_split`, so it reaches every derived list at once —
+chains, one-hop candidates, reachability, parked fits, and the exact solve. Two
+places deliberately ignore it, both manual escape hatches: `drop_targets` (the
+board's drag) and the assign pickers. The horizon says what the planner decides
+on its own, not what a dispatcher may do by hand.
+
+Supply is never cut. A bus that finished the day before the window opens is
+standing there ready, and dropping it would make the first trips in the window
+unreachable for no reason anybody asked for.
+
+Two consequences worth knowing before changing it:
+
+- **Re-chain must not release past the cutoff** — see §8's fifth boundary.
+- **A horizon below 21 days makes reclaim a no-op**, because nothing is both
+  far enough out to cancel and near enough to plan. Counted separately
+  (`frozen_horizon` vs `frozen_notice`) so the panel can say which rule bit.
 
 ## 4. When can a bus take a trip? (`graph.py`)
 
-`feasible_edges` (`buschain/engine/graph.py:133`) emits an edge only when four
+`feasible_edges` (`buschain/engine/graph.py`) emits an edge only when four
 gates all pass. This edge list *is* the optimization model (rule 8): the greedy
 v1 ranks it, and a future min-cost-flow/ILP solver would consume the identical
 edges plus a cost function.
 
 **Gate 1 — city and time window (rules 1–2).** The gap is
 `demand.start − supply.end` in days. The floor depends on where the bus is and
-where it must be (`min_gap_days`, `graph.py:39`):
+where it must be (`min_gap_days`):
 
 | Situation | Floor | Window (gap) | Why |
 |---|---|---|---|
@@ -111,9 +149,14 @@ deliberately a code literal, not user config: each pair is a claim about the
 map, the source data carries no distances to derive it from, and it is *not*
 transitive (CPH–BGO is two short hops via OSL but is not itself short).
 
-**Gate 2 — Y/N constraint (rule 3).** `_constraint_ok` (`graph.py:82`):
-`Y` + company X → only X's buses may serve; `N` + X → X never; blank →
-anyone. Hard filter, company-level.
+**Gate 2 — Y/N constraint (rule 3).** `company_ok` (and `_constraint_ok` over
+it, `graph.py`): `Y` + company X → only X's buses may serve; `N` + X → X
+never; blank → anyone. Hard filter, company-level. Where Y/N comes from
+*today*: the brief's `Y-N`/`B Comp` column pair is retired — the contract
+derives both from the **Bus Preference** column's free text
+(`contract.py`): a bare company name means `Y` (only them), a `NO ` prefix
+means `N` (never them), and text that does not resolve to a registry company
+fails the row rather than being ignored.
 
 **Gate 2b — capacity (rule 10).** `numbered_unit_ok` (`graph.py`): the chartered
 coaches seat `CHARTERED_PAX` (49), so a demand trip stating any other `Pax`
@@ -129,7 +172,7 @@ the reference workbook: its 16 non-49 rows are all already ad hoc, so coverage
 stays at 113/190 and the rule enumerates zero findings.
 
 **Gate 3 — the unit's whole timeline stays valid (rule 6).**
-`_unit_timeline_ok` (`graph.py:97`) simulates the accept: no overlap with any
+`_unit_timeline_ok` (`graph.py`) simulates the accept: no overlap with any
 existing trip, no existing trip already sitting inside the gap, and if the unit
 has a later trip, that successor must still chain from the *demand* trip
 afterwards (unless the successor is ER-marked — its explicit repositioning
@@ -146,8 +189,11 @@ typically shrinks it.
 
 **Gate 4 — repositioning only off the tail.** An empty-run edge
 (`arr_city ≠ dep_city`) is emitted only when `reposition=True` **and** nothing
-follows the supply trip on that unit (`graph.py:159`). Mid-chain, driving the
-bus somewhere else would strand whatever comes next in the wrong city.
+follows the supply trip on that unit (the tail check in `feasible_edges`).
+Mid-chain, driving the bus somewhere else would strand whatever comes next in
+the wrong city. The blind spot this rule creates — a bus idle for weeks
+mid-timeline behind one far-off committed trip — is enumerated rather than
+planned: see `parked.py` (§7).
 
 ### The same rules asked the other way round (`insertion_ok`)
 
@@ -267,7 +313,7 @@ Both trips covered, zero empty runs, Vilkas 2 still free. Had `V2→Y` been
 taken in round 1, the fleet would have paid an empty run for a trip V1 could
 reach for free.
 
-`chain_order` (`plan.py:200`) gives each chain's demands in accept order —
+`chain_order` (`plan.py`) gives each chain's demands in accept order —
 each link's supply must be assigned before the link itself, so committing a
 chain walks it front to back.
 
@@ -298,12 +344,12 @@ kinds, then lets CBC pick the best consistent set:
 The consistency rules are the ones you already know from the greedy: each
 demand covered at most once, one successor per tail, and a hop needs its
 predecessor. Time ordering makes cycles impossible, so that is the whole
-model (`solve.py:117-247`).
+model (`solve.py`, `_solve`).
 
 Three properties keep the result trustworthy: it restates no rules (windows
 from `min_gap_days`, Y/N from `reach._company_ok`, tail-only repositioning);
 every link is **certified** by replaying the solution hop-by-hop through
-`feasible_edges` before it reaches the caller (`_certify`, `solve.py:254`);
+`feasible_edges` before it reaches the caller (`_certify`, `solve.py`);
 and it is deterministic (canonical variable order + single-threaded CBC). The
 objective prices what the model can honestly price — a covered trip
 (100,000,000) always dominates, then fewer empty runs (100,000 each), then
@@ -333,7 +379,7 @@ Two distinct measures of "days", intentionally different:
 - **Ranking uses raw `gap_days`** — a bus mid-empty-run is out of service just
   as surely as one parked in a yard. Question: *which bus is free first?*
 - **`Plan.idle_days` subtracts the travel floor**
-  (`gap − min_gap_days(from, to)`, `plan.py:195`) — days spent driving are
+  (`gap − min_gap_days(from, to)`, computed in `_assemble`) — days spent driving are
   worked, not idled. Question: *how much time was wasted?* Charging travel as
   idleness would make the idle objective avoid distance rather than avoid
   waiting.
@@ -350,8 +396,9 @@ and is pinned to the same boundaries as `graph.py` by
 |---|---|---|
 | `suggestions_*` (`suggest.py:25`) | "You could accept this link *now*." One hop only, ranked, both directions (per free unit, per uncovered trip). | Everything past the first hop. |
 | `plan` (`plan.py:79`) | "Here's a full future the fleet could run." Contention-aware — one bus can't be in two places. | Optimality (greedy) and locked/committed alternatives. |
-| `optimal_plan` (`solve.py:95`, on demand) | "Here's the *most* the fleet could cover." Exact, certified, deterministic. | Cost beyond empty-run counts — and it's seconds, not milliseconds, hence preview-only. |
+| `optimal_plan` (`engine/__init__.py`, on demand) | "Here's the *most* the fleet could cover." Exact, certified, deterministic. | Cost beyond empty-run counts — and it's seconds, not milliseconds, hence preview-only. |
 | `reachable` (`reach.py:48`) | "Some accept sequence could chain into this trip *without any empty run*." | Contention entirely — and repositioning, on purpose. |
+| `parked` (`parked.py`, the board's **Parked buses** panel) | "This bus is idle mid-chain longer than any window; these uncovered trips would fit, at this empty-run price." | Nothing is proposed. Acting on one is the board's drag — the planner abstains because its cross-city moves are tail-only, and the double empty run is a person's call (rule 6). |
 
 None subsumes another. `reachable` ignores contention, so it overstates what
 the fleet can serve; but the planner may *spend* an empty run to cover a trip
@@ -365,7 +412,7 @@ chained into no matter what order anyone accepts things. The walk runs over
 same trip satisfy different Y/N constraints downstream; collapsing to trips
 would invent false dead ends.
 
-One more suggestion rule (rule 3/5, `suggest.py:67`): a `Y`-constrained trip
+One more suggestion rule (rule 3/5, `suggest.py`): a `Y`-constrained trip
 with no feasible *free* chain gets an **ad hoc fallback** suggestion of its
 mandated company, ranked last. A repositioning-only chain doesn't suppress the
 fallback — that's exactly when "another bus from the same yard" is the obvious
@@ -376,17 +423,22 @@ alternative to driving one across the map.
 Everything above is additive — a committed assignment is immovable supply the
 chains route around (that's what makes confirmed links immune to replanning,
 with no lock flag needed anywhere). `rechain.build`
-(`buschain/engine/rechain.py:41`) is the one place assignments are taken
+(`buschain/engine/rechain.py`) is the one place assignments are taken
 *back*, and it plans nothing itself: it restates the world as if the released
 assignments had never been made and hands that to the ordinary `evaluate()`.
 One planner, one rule set — a second "replanner" would be a second place for
 the rules to drift.
 
-Four release boundaries, none negotiable:
+Five release boundaries, none negotiable:
 
-1. **Only app-written assignments** (`system_assigned`). A company name that
-   arrived on the spreadsheet is source data; re-chain must not become the back
-   door around `repo.unassign`'s refusal to clear it.
+1. **Only app-written assignments** (`repo.system_assigned_ids` — overrides
+   whose imported cell was blank). A company name that arrived on the
+   spreadsheet is source data *for automation*: a person may retype or clear
+   an imported bus (the Data tab, the worklist and the board drag all write
+   the same Company-cell override), but a bulk replan must never silently
+   overwrite what the sheet said. That is why the boundary lives in
+   `system_assigned_ids` rather than in a `repo.unassign` refusal, where it
+   used to sit.
 2. **Only trips that haven't started** (`start > as_of`). A bus already
    driving can't be re-decided.
 3. **Locked trips are exempt** on top of both.
@@ -397,9 +449,17 @@ Four release boundaries, none negotiable:
    number (accepting a plan only ever writes numbered assignments, so the
    reference data has zero app-written ad hoc rows and the figures below are
    unchanged), but the path existed.
+5. **Only trips inside the planning horizon** (`start <= horizon`). The same
+   horizon bounds `evaluate`'s demand, so an assignment past the cutoff would be
+   taken back and then be invisible to the planner meant to re-place it —
+   stranded by arithmetic, every time. Unlike the four above this is not a
+   policy preference: without it the horizon silently turns a re-chain into a
+   wrecking ball. Counted as `frozen_horizon`, and `frozen_source` /
+   `frozen_locked` count *inside* the horizon so the four numbers partition the
+   future assignments and the panel's arithmetic adds up.
 
 Accepted links touching a released trip are dropped in both directions
-(`rechain.py:80`): the link *into* it dies with the assignment; the link *out*
+(in `build`): the link *into* it dies with the assignment; the link *out*
 of it would claim a bus that may now be elsewhere fed the next trip.
 
 The result is **not monotone**: releasing N assignments does not bring N back.
@@ -408,9 +468,11 @@ it took the bus from — measured: 18 of 60 released trips came back with no bus
 (idle objective, reference data). That's why `stranded` is a first-class field
 (it's the number that decides whether to commit) and why the web layer previews
 before committing. `frozen_source` / `frozen_locked` counts let the UI explain
-why only 60 of 448 future trips were even in play. `commit_links`
-(`rechain.py:99`) emits writes in chain order so the store's own
-"supply-must-be-assigned-first" check passes naturally.
+why the releasable number is small against the future as a whole — most future
+assignments came in on the sheet. (Illustration on the reference data with the
+full plan accepted, measured 2026-08: 113 releasable, 56 frozen as source
+data, none locked.) `commit_links` (`rechain.py`) emits writes in chain order
+so the store's own "supply-must-be-assigned-first" check passes naturally.
 
 ## 9. Reclaiming ad hoc trips (`adhoc.py`, rule 11)
 
@@ -437,6 +499,18 @@ Put a now-relative constant in the one module that never receives `as_of` and it
 will eventually be applied to a trip-to-trip gap, where it means something else.
 It also **subsumes** §8's `start > as_of` boundary (21 ≥ 1), which is why
 `refusal` does not repeat it.
+
+It does **not** subsume the planning horizon, and `refusal` asks the two in a
+fixed order — notice first, then horizon — because they mean opposite things.
+Notice is the supplier's deadline: the hire cannot be cancelled at any price.
+The horizon is a window the dispatcher chose and can widen in one click.
+Reported the other way round, "frozen by the cancellation deadline" would be
+advice to give up on work that is merely out of view. Their arithmetic:
+**a horizon shorter than 21 days leaves nothing eligible at all**, since no
+trip can be both far enough out to cancel and near enough to plan. At the
+default month the usable band is days 21–30. Measured on the reference data
+(2026-08-02): 79 eligible unbounded, 24 at the 1-month default (55 frozen by
+the horizon), 0 at 2 weeks (all 79 frozen by it).
 
 **Three things this action does differently from a re-chain:**
 
@@ -476,13 +550,13 @@ dropped, 109 → 112.
 
 All *listed, never auto-fixed*.
 
-- **Unit integrity** (rule 6, `checks.py:56`): every consecutive pair on every
+- **Unit integrity** (rule 6, `checks.unit_integrity`): every consecutive pair on every
   numbered unit is classified — `overlap` (violation), `gap_out_of_window`,
   `city_mismatch`, `explicit_er` (sheet's ER mark: enumerated fact, not
   violation), or `reposition` (the pair matches an *accepted* link — the
   planner's own approved empty run, listed as a cost worth seeing rather than
   a mismatch to fix).
-- **Fleet warnings** (rule 5, `checks.py:18`): per company per day, concurrent
+- **Fleet warnings** (rule 5, `checks.fleet_warnings`): per company per day, concurrent
   trips on *numbered units* > fleet size. Deliberate deviation from the brief,
   which counts ad hoc too: fleet size means *chartered* vehicles, while ad hoc
   means "some further bus from their yard" — capacity the charter count says
@@ -490,11 +564,11 @@ All *listed, never auto-fixed*.
   data (Ollex: 2 chartered, 120 ad hoc trips), burying the real
   over-commitments. Intervals count both endpoints — a bus is occupied on its
   end day.
-- **Broken chains** (rule 4, `checks.py:96`): when a supply trip is canceled,
+- **Broken chains** (rule 4, `checks.broken_chains`): when a supply trip is canceled,
   unassigned, or gone, every accepted link depending on it — transitively down
   the chain — lands on the worklist. Fixpoint iteration, since links arrive in
   any order.
-- **At-risk tracing** (rule 4, `deps.py:15`): every suggestion lists the
+- **At-risk tracing** (rule 4, `deps.at_risk_chain`): every suggestion lists the
   Pending trips in its supply's upstream accepted chain — the trips whose
   cancellation would break the plan — so the human sees the risk *before*
   accepting.
@@ -503,13 +577,13 @@ All *listed, never auto-fixed*.
 
 | Brief rule | Where |
 |---|---|
-| 1 — D+1…D+4 window, max 3 rest days | `graph.py:16` constants, `min_gap_days` `graph.py:39`, applied `graph.py:168` |
-| 2 — city match on canonical codes | `graph.py:161` (`arr_city`/`dep_city` equality; codes canonicalized upstream in `model.Registry.resolve_city`) |
-| 3 — Y/N constraints + ad hoc fallback | `graph.py` (`company_ok`, and `_constraint_ok` over it), `reach.py:38`, fallback `suggest.py:66` |
-| 4 — risk marks + broken-chain worklist | `deps.py:15` (`at_risk_chain`), `checks.py:96` (`broken_chains`) |
-| 5 — fleet over-commitment | `checks.py:18` (`fleet_warnings`; numbered-only, documented deviation) |
-| 6 — unit integrity | `checks.py:56` (reporting), `graph.py` (`_unit_timeline_ok` for the planner, `insertion_ok` for the board's drag — same rules, opposite question) |
-| 7 — canceled excluded, retained | `__init__.py:84` (inside `_split`) |
+| 1 — D+1…D+4 window, max 3 rest days | `graph.py:16` constants, `min_gap_days`, applied in `feasible_edges` |
+| 2 — city match on canonical codes | `graph.py` (`_pair_chainable` / `feasible_edges` — `arr_city`/`dep_city` equality; codes canonicalized upstream in `model.Registry.resolve_city`; Y/N and the constraint company are parsed from Bus Preference by `contract.py`) |
+| 3 — Y/N constraints + ad hoc fallback | `graph.py` (`company_ok`, and `_constraint_ok` over it), `reach.py` (`_company_ok`), fallback in `suggest.build_suggestions` |
+| 4 — risk marks + broken-chain worklist | `deps.py` (`at_risk_chain`), `checks.py` (`broken_chains`) |
+| 5 — fleet over-commitment | `checks.py` (`fleet_warnings`; numbered-only, documented deviation) |
+| 6 — unit integrity | `checks.py` (`unit_integrity`), `graph.py` (`_unit_timeline_ok` for the planner, `insertion_ok` for the board's drag — same rules, opposite question); `parked.py` (`windows`) enumerates the mid-chain idle blocks the tail-only rule hides, with the fits `insertion_ok` allows |
+| 7 — canceled excluded, retained | `engine/__init__.py` (inside `_split`) |
 | 8 — graph model, greedy + exact | `graph.py` (edges = the model), `suggest.py` + `plan.py` (greedy consumers), `solve.py` (exact consumer — same edges, solved optimally) |
 | 9 — human-in-the-loop ranking | `suggest.py` (engine never assigns; `plan` is provisional; only `repo.accept` writes) |
 | 10 — non-49 Pax is ad hoc only | `graph.py` (`CHARTERED_PAX`, `numbered_unit_ok`), applied `feasible_edges` + `insertion_verdict`, `reach.py`, `solve.py`; imported violations listed by `checks.unit_integrity` as `pax_mismatch` |

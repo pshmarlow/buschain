@@ -168,7 +168,10 @@ def test_every_feasible_edge_is_a_legal_insertion(report):
     two are required to agree. The two documented divergences on timelines that
     are already impossible are covered by name below.
     """
-    _, supply, demand, unit_assignments, _ = engine._split(report, frozenset(), None)
+    # No date bounds: this is about whether the rules agree with each other,
+    # and a window would only shrink the generated demand the property runs on.
+    _, supply, demand, unit_assignments, _, _ = engine._split(
+        report, frozenset(), None, None)
     for reposition in (False, True):
         for e in graph.feasible_edges(supply, demand, unit_assignments, reposition):
             key = (e.supply.assignment.company, e.supply.assignment.unit)

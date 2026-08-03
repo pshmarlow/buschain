@@ -5,17 +5,25 @@ have none, and a committed assignment is immovable by construction (see
 plan.py's module docstring). This is the one place that takes an assignment
 BACK, so a fleet can be rearranged rather than only extended.
 
-Four boundaries make that safe, and none of them is negotiable:
+Five boundaries make that safe, and none of them is negotiable:
 
 * Only assignments this app wrote are released. A company name that arrived on
-  the spreadsheet is source data — repo.unassign already refuses to clear one,
-  and a re-chain must not become the back door around that rule.
+  the spreadsheet is source data for AUTOMATION — a person may clear it (the
+  Data tab, the worklist and the board drag all write the same Company-cell
+  override), but a bulk replan must never overwrite it silently. That is why
+  the boundary lives in repo.system_assigned_ids.
 * Only trips that have not started yet. A bus already driving cannot be
   re-decided, whatever the plan would prefer.
 * Locked trips are exempt on top of both.
 * Only NUMBERED assignments. Ad hoc hires are engine/adhoc.py's business — see
   the comment on future_assigned. The two release sets are disjoint by
   construction, and test_rechain.py pins that.
+* Only trips inside the planning horizon. Never release what you cannot
+  replan: the same horizon bounds evaluate's demand, so an assignment past the
+  cutoff would be taken back and then be invisible to the planner that is
+  supposed to re-place it — stranded by arithmetic, every time, on a trip that
+  had a bus a moment ago. This boundary is not a policy preference like the
+  others; without it the horizon silently turns re-chain into a wrecking ball.
 
 Nothing here writes, and nothing here plans: it restates the world as if the
 released assignments had never been made and hands that to the ordinary
@@ -49,6 +57,7 @@ def build(
     system_assigned: AbstractSet[TripId],
     locked: AbstractSet[TripId] = frozenset(),
     as_of: date,
+    horizon: date | None = None,
     objective: plan_mod.Objective = plan_mod.DEFAULT_OBJECTIVE,
     reposition: bool = True,
 ) -> RechainResult:
@@ -56,6 +65,9 @@ def build(
 
     system_assigned: trips whose assignment came from this app rather than the
     source file (repo.system_assigned_ids).
+
+    horizon: the planner's far bound, applied to the RELEASE set as well as to
+    the replan — see the fifth boundary in the module docstring.
     """
     # Numbered assignments only. Releasing one gives a bus back to the pot and
     # the worst case is a trip back on the worklist. Releasing an ad hoc one
@@ -72,8 +84,17 @@ def build(
         and t.status is not Status.CANCELED
         and t.start > as_of
     ]
+    # The horizon cut lives HERE and not in the `released` comprehension below,
+    # so a trip past the cutoff is counted as untouched work rather than as
+    # something the app refused to hand back — the same distinction
+    # frozen_source and frozen_locked already draw, and the reason all three
+    # counters are derived from one list.
+    in_horizon = [
+        t for t in future_assigned
+        if horizon is None or t.start <= horizon
+    ]
     released = frozenset(
-        t.id for t in future_assigned
+        t.id for t in in_horizon
         if t.id in system_assigned and t.id not in locked
     )
 
@@ -95,16 +116,23 @@ def build(
     ]
 
     result = evaluate(stripped, registry, kept, objective, reposition,
-                      locked, as_of)
+                      locked, as_of, horizon)
+    # The three counters partition future_assigned with `released`, so a panel
+    # can show four numbers that sum to the total. That is why frozen_source and
+    # frozen_locked count over in_horizon rather than future_assigned: a
+    # source-written trip past the cutoff is out of scope first and frozen by
+    # provenance second, and counting it twice would make the arithmetic lie.
     return RechainResult(
         as_of=as_of,
+        horizon=horizon,
         released=tuple(sorted(released)),
         stranded=tuple(sorted(released - result.plan.covered)),
         engine=result,
         frozen_source=sum(
-            1 for t in future_assigned if t.id not in system_assigned),
+            1 for t in in_horizon if t.id not in system_assigned),
         frozen_locked=sum(
-            1 for t in future_assigned if t.id in system_assigned and t.id in locked),
+            1 for t in in_horizon if t.id in system_assigned and t.id in locked),
+        frozen_horizon=len(future_assigned) - len(in_horizon),
     )
 
 

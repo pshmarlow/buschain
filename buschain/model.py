@@ -200,6 +200,36 @@ class BrokenChainItem:
 
 
 @dataclass(frozen=True)
+class ParkedFit:
+    """One uncovered trip a parked window could absorb — and at what price.
+
+    er_out_days / er_back_days are each empty run's day floor (min_gap_days of
+    the move), 0 when that side needs no drive. chains mirrors Insertion.chains:
+    whether dropping the trip there would record a link or a bare assignment.
+    """
+    demand: TripId
+    gap_out: int                        # demand.start - window opener's end
+    er_out_days: int
+    er_back_days: int
+    chains: bool
+
+
+@dataclass(frozen=True)
+class ParkedWindow:
+    """A unit idle between two committed trips for longer than any chain
+    window. The planner cannot see into these (cross-city moves are tail-only,
+    see engine/parked.py), so they are enumerated for a human instead.
+    Derived state, recomputed per evaluate() like the plan."""
+    company: str
+    unit: int
+    after: TripId                       # the trip whose arrival opens the window
+    before: TripId                      # the committed trip that closes it
+    city: str                           # where the bus stands (after.arr_city)
+    days: int                           # before.start - after.end
+    fits: tuple[ParkedFit, ...]
+
+
+@dataclass(frozen=True)
 class PlannedLink:
     """One hop of a proposed chain. Derived state — never persisted.
 
@@ -260,6 +290,15 @@ class EngineResult:
     plan: Plan = field(
         default_factory=lambda: Plan(
             objective="coverage", chains=(), covered=frozenset(), idle_days=0))
+    # Units idle mid-chain longer than any chain window, with the uncovered
+    # trips a manual drop could put there (engine/parked.py). Listed, never
+    # proposed: the planner's cross-city moves are tail-only by rule.
+    parked: tuple[ParkedWindow, ...] = ()
+    # Uncovered trips the planning horizon put out of scope. A count, not a
+    # list: its only job is to let a UI say why an empty plan is empty. Without
+    # it a horizon that lands before the season starts is indistinguishable
+    # from a fleet with nothing to offer, and the first looks like a bug.
+    beyond_horizon: int = 0
 
 
 @dataclass(frozen=True)
@@ -277,12 +316,17 @@ class RechainResult:
     # replan is not monotone and can strand a trip that currently has one.
     stranded: tuple[TripId, ...]
     engine: EngineResult
+    # The planning horizon this was built under, carried for the same reason
+    # `notice_days` is carried below: the client must name the cutoff date in
+    # the panel and must not re-derive it from a preset it could read stale.
+    horizon: date | None = None
     # Future assignments the rearrangement is not allowed to touch, so a UI can
     # explain why 60 is the answer on a dataset with 448 future trips. Counted
     # here rather than re-derived by the client: the source-file boundary is
     # decided in exactly one place (repo.system_assigned_ids) and stays there.
     frozen_source: int = 0
     frozen_locked: int = 0
+    frozen_horizon: int = 0             # past the horizon: out of scope, not released
 
 
 @dataclass(frozen=True)
@@ -317,8 +361,16 @@ class AdhocReclaimResult:
     # concept and the engine stays ignorant of it.
     from_source: tuple[TripId, ...]
     engine: EngineResult
+    # As on RechainResult: the cutoff the panel names, owned by the engine.
+    horizon: date | None = None
     # Live ad hoc trips the action will not touch, counted so a panel can say
     # why. Mutually exclusive by construction — see adhoc.refusal's test order.
     frozen_locked: int = 0
     frozen_pax: int = 0                 # not 49: no numbered unit could take them (rule 10)
     frozen_notice: int = 0              # inside the cancellation window (rule 11)
+    # Past the horizon. Worth its own counter rather than folding into
+    # `frozen_notice`: notice is the supplier's deadline and cannot be argued
+    # with, this one is a scope the dispatcher chose and can widen. A horizon
+    # shorter than notice_days freezes EVERY hire between the two counters, and
+    # a panel that cannot tell them apart cannot say which to fix.
+    frozen_horizon: int = 0

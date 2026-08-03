@@ -56,6 +56,23 @@ def _sid(t: TripId | None) -> str | None:
     return None if t is None else _rid(t)
 
 
+def _horizon(settings: dict[str, Any]) -> date | None:
+    """The planner's far bound as an absolute date — None for "all".
+
+    The stored setting is a day count and the engine takes a date, and this one
+    line is the whole conversion, for the same reason `_rechain` resolves
+    `as_of` here: today's date enters the system in the web layer and nowhere
+    deeper, so evaluate() stays a pure function its tests can pin at both ends.
+
+    Recomputed per request rather than cached, so a session left open across
+    midnight simply plans one day further out on its next refresh.
+    """
+    horizon = settings["horizon"]
+    if horizon == "all":
+        return None
+    return date.today() + timedelta(days=int(horizon))
+
+
 def _trip_json(t: Trip) -> dict[str, Any]:
     return {
         "id": _sid(t.id), "status": t.status.value, "project": t.project,
@@ -121,7 +138,25 @@ def _engine_json(result: EngineResult) -> dict[str, Any]:
         # reach this" — the two look identical without it. NOT a coverage
         # forecast: it ignores contention, so it far exceeds what `plan` covers.
         "reachable": sorted(_rid(t) for t in result.reachable),
+        # Uncovered trips the horizon put out of scope. Without it an empty plan
+        # on import day — the normal case, when the season starts more than a
+        # month out — is indistinguishable from a fleet that can do nothing.
+        "beyond_horizon": result.beyond_horizon,
         "plan": _plan_json(result.plan),
+        # Units idle mid-chain longer than any chain window, and the uncovered
+        # trips a manual drop could put there. Listed because the planner
+        # cannot propose them (cross-city moves are tail-only).
+        "parked": [
+            {"company": w.company, "unit": w.unit,
+             "after": _sid(w.after), "before": _sid(w.before),
+             "city": w.city, "days": w.days,
+             "fits": [
+                 {"demand": _sid(f.demand), "gap_out": f.gap_out,
+                  "er_out_days": f.er_out_days, "er_back_days": f.er_back_days,
+                  "chains": f.chains}
+                 for f in w.fits]}
+            for w in result.parked
+        ],
     }
 
 
@@ -153,10 +188,15 @@ def get_state(request: Request) -> dict[str, Any]:
     settings = repo.settings()
     report, registry, accepted = repo.load_state()
     locked = repo.locked_ids()
+    horizon = _horizon(settings)
     result = engine.evaluate(report, registry, accepted,
-                             settings["objective"], settings["reposition"], locked)
+                             settings["objective"], settings["reposition"],
+                             locked, None, horizon)
     return {
         "settings": settings,
+        # The resolved cutoff, so the toolbar can print the date it is planning
+        # through instead of making the browser redo today + N and drift.
+        "horizon_through": horizon.isoformat() if horizon else None,
         # Trips the planner is told to leave alone. Sent as its own list rather
         # than a flag on each trip: it is not a property of the row, and the
         # export must never learn about it.
@@ -619,7 +659,7 @@ def _current_plan(repo: Repo) -> Plan:
     report, registry, accepted = repo.load_state()
     result = engine.evaluate(report, registry, accepted,
                              settings["objective"], settings["reposition"],
-                             repo.locked_ids())
+                             repo.locked_ids(), None, _horizon(settings))
     return result.plan
 
 
@@ -677,7 +717,7 @@ def _optimal(repo: Repo) -> tuple[Any, int]:
     try:
         return engine.optimal_plan(
             report, reposition=settings["reposition"], locked=repo.locked_ids(),
-            objective=settings["objective"])
+            horizon=_horizon(settings), objective=settings["objective"])
     except engine.solve.SolverUnavailable as e:
         raise HTTPException(409, str(e)) from e
 
@@ -724,6 +764,7 @@ def _rechain(repo: Repo, settings: dict[str, Any]) -> RechainResult:
         system_assigned=repo.system_assigned_ids(),
         locked=repo.locked_ids(),
         as_of=date.today(),
+        horizon=_horizon(settings),
         objective=settings["objective"],
         reposition=settings["reposition"],
     )
@@ -732,12 +773,14 @@ def _rechain(repo: Repo, settings: dict[str, Any]) -> RechainResult:
 def _rechain_json(result: RechainResult, settings: dict[str, Any]) -> dict[str, Any]:
     return {
         "as_of": result.as_of.isoformat(),
+        "horizon": result.horizon.isoformat() if result.horizon else None,
         "objective": settings["objective"],
         "reposition": settings["reposition"],
         "released": [_rid(t) for t in result.released],
         "stranded": [_rid(t) for t in result.stranded],
         "frozen_source": result.frozen_source,
         "frozen_locked": result.frozen_locked,
+        "frozen_horizon": result.frozen_horizon,
         "plan": _plan_json(result.engine.plan),
     }
 
@@ -796,6 +839,7 @@ def _reclaim(repo: Repo, settings: dict[str, Any]) -> AdhocReclaimResult:
         report, registry, accepted,
         locked=repo.locked_ids(),
         as_of=date.today(),
+        horizon=_horizon(settings),
         objective=settings["objective"],
         reposition=settings["reposition"],
     )
@@ -816,6 +860,10 @@ def _reclaim_json(result: AdhocReclaimResult,
         # the deadline is the engine's number and the browser must not re-derive
         # it from a constant of its own.
         "cutoff": (result.as_of + timedelta(days=result.notice_days)).isoformat(),
+        # The other end of the same window. When it lands before `cutoff` the
+        # two rules cross and nothing can ever be eligible — the panel needs
+        # both dates to say that, rather than showing an empty list.
+        "horizon": result.horizon.isoformat() if result.horizon else None,
         "objective": settings["objective"],
         "reposition": settings["reposition"],
         "eligible": [_rid(t) for t in result.eligible],
@@ -826,6 +874,7 @@ def _reclaim_json(result: AdhocReclaimResult,
         "frozen_locked": result.frozen_locked,
         "frozen_pax": result.frozen_pax,
         "frozen_notice": result.frozen_notice,
+        "frozen_horizon": result.frozen_horizon,
         "plan": _plan_json(result.engine.plan),
     }
 
@@ -873,13 +922,17 @@ class Settings(BaseModel):
     objective: str | None = None
     # None means "leave as is" — the client patches one setting at a time.
     reposition: bool | None = None
+    # A day count or "all", never a date: the client picks how far, the server
+    # decides from when (_horizon). A client-submitted cutoff would let a
+    # browser open since yesterday plan against a stale today.
+    horizon: str | None = None
 
 
 @router.post("/settings")
 def set_settings(request: Request, body: Settings) -> dict[str, Any]:
     try:
         return {"ok": True, "settings": _repo(request).set_settings(
-            body.mode, body.objective, body.reposition)}
+            body.mode, body.objective, body.reposition, body.horizon)}
     except RepoError as e:
         raise HTTPException(422, str(e)) from e
 
