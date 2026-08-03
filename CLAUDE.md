@@ -114,4 +114,8 @@ Strict one-way layering; each boundary is a design decision, not a habit:
   in their names/docstrings). AT1 byte-identity is the tripwire for any
   codec change.
 - This directory is a git repository with a GitHub remote (`origin`). Branch
-  before sweeping changes; commit or push only when asked.
+  before sweeping changes; commit only when asked — but **always push after
+  committing**, in the same turn, rather than leaving a branch ahead of its
+  remote. The work moves between two machines, so an unpushed commit is an
+  invisible one. Never force-push to satisfy this: if a push is rejected as
+  non-fast-forward, say so instead of escalating.
