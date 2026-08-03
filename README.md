@@ -16,11 +16,35 @@ python3 -m venv .venv
 
 ### Using it on Windows
 
-`py -3`, not `python3`: the latter is an app-execution alias that opens the
-Microsoft Store instead of running anything. Double quotes, because `cmd.exe`
-does not strip single ones.
+One prerequisite, once per PC: **Python 3.11 or newer** from
+https://www.python.org/downloads/, with **Add python.exe to PATH** ticked in
+the installer. The launcher can't install Python for you, but it says so in
+plain words if it's missing.
 
-Fresh clone on the Windows machine:
+Then:
+
+1. Copy (or clone) the whole `buschain` folder onto the machine — somewhere
+   local, **not** inside OneDrive. `C:\dev\buschain` is a good choice.
+2. **Double-click `start-buschain.bat`.**
+3. To keep it off the desktop hunt: right-click that file → **Send to →
+   Desktop (create shortcut)**, and pin the shortcut to the taskbar if you
+   like.
+
+The first double-click creates the virtualenv and installs everything — a few
+minutes, and it needs an internet connection. Every double-click after that
+starts straight up. Either way it opens the browser on http://127.0.0.1:8000
+once the port is actually answering.
+
+The console window it opens *is* the server — closing it stops the app. Double-
+clicking again while it is already running just opens the browser again instead
+of failing. And if an install is ever interrupted — no network, a proxy — the
+next double-click finishes it instead of failing forever.
+
+#### Doing the setup by hand
+
+Only needed if you're working on the code. `py -3`, not `python3`: the latter
+is an app-execution alias that opens the Microsoft Store instead of running
+anything. Double quotes, because `cmd.exe` does not strip single ones.
 
 ```bat
 git clone https://github.com/pshmarlow/buschain.git
@@ -29,21 +53,6 @@ py -3 -m venv .venv
 .venv\Scripts\pip install -e ".[dev]"
 .venv\Scripts\python -m buschain.web
 ```
-
-Then open http://127.0.0.1:8000. If you already have the repo cloned there,
-`git pull` first — Windows support landed after the initial import.
-
-#### Starting it day to day
-
-After that one-time setup, **double-click `start-buschain.bat`** in the repo
-folder. It starts the server and opens the browser once the port is actually
-answering. To keep it off the desktop hunt: right-click the file →
-**Send to → Desktop (create shortcut)**, and pin that shortcut to the taskbar
-if you like.
-
-The console window it opens *is* the server — closing it stops the app. Double-
-clicking again while it is already running just opens the browser again instead
-of failing.
 
 Two things specific to a Windows run:
 
@@ -54,10 +63,11 @@ Two things specific to a Windows run:
   folder, so this only bites if you start the server by hand from a shell.
   The relative path itself is deliberately left unchanged, since fixing it
   would move an existing database.
-- **Clone somewhere outside OneDrive.** On Windows 11, Known Folder Move puts
+- **Keep it outside OneDrive.** On Windows 11, Known Folder Move puts
   `Documents` and `Desktop` under sync by default, and the `.db`/`-wal`/`-shm`
   trio doesn't survive being synced as three independent files. `C:\dev\buschain`
-  or similar.
+  or similar. The launcher warns when it finds itself in a synced folder, but
+  it only warns — it still starts.
 
 First use: import the planner xlsx on the **Data** tab, then press
 **Seed from Information sheet** on the **Registry** tab (one-time; the
