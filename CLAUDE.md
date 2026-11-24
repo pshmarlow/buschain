@@ -15,7 +15,9 @@ uvx ruff check buschain tests                       # lint (config in pyproject;
 ```
 
 On Windows the interpreter is `.venv\Scripts\python.exe` — substitute it for
-`.venv/bin/python` throughout. `uvx ruff check` is identical on both.
+`.venv/bin/python` throughout. `uvx ruff check` is identical on both. The
+timings above are from the Mac; on the Windows PC the full suite takes about
+6 minutes.
 
 `tests/unit/test_rules_js.py` runs the browser's rule arithmetic in node and
 skips if node is absent. The exact solver needs `pulp` (`buschain[solver]`
@@ -26,7 +28,9 @@ extra, pinned `<4` — PuLP 4.0 removes the API in use; migration note in
 default DB. For any experiment or manual run, pass a scratch path to
 `create_app(db_path)` instead. The reference workbook
 `LDC_PLANNER__test.xlsx` is the fixture for the whole test suite — never edit
-it.
+it. `CAPITALS WINTER.xlsx` is a fixture too: the new-season workbook, whose
+trip tab has a different name, which `test_api.py` imports to pin that the csv
+export follows the trips to the first tab. The same goes for it.
 
 ## What this is
 
