@@ -956,6 +956,9 @@ def test_horizon_bounds_everything_the_planner_derives(client):
     # Nothing DISAPPEARS, though — the horizon bounds what the planner decides,
     # not what the dispatcher can see or reach by hand.
     assert outside <= {t["id"] for t in narrow["trips"]}
+    # And each one is named with its reason, so the board can label the bar
+    # "outside the plan-ahead window" instead of "no chain reaches this".
+    assert {t for t, why in e["out_of_scope"].items() if why == "horizon"} == outside
 
 
 def test_horizon_round_trips_and_rejects_unknown_values(client):
@@ -1023,6 +1026,120 @@ def test_reclaim_separates_the_notice_deadline_from_the_horizon(client):
     assert narrow["frozen_horizon"] == len(wide["eligible"])
     # Mutually exclusive, so the panel's arithmetic adds up.
     assert narrow["frozen_notice"] == wide["frozen_notice"]
+
+
+# -- the near end of the window: trips already under way ---------------------
+# The planner leaves a trip alone from its start date on. The `client` fixture
+# pins TODAY before the reference season opens, so nothing has started there;
+# these tests move the clock into the season, and past it, to see what changes.
+
+
+# Early September: late enough that some uncovered trips have started, early
+# enough that buses with a RECORDED trip can still reach the next ones (the
+# workbook's last committed trip ends on the 9th — see the test after next).
+MID_SEASON = date(2026, 9, 5)
+
+
+def test_the_planner_leaves_started_trips_alone(client, monkeypatch):
+    """Before this the plan covered every uncovered trip in the file whatever
+    its date — mid-season that meant proposing buses for trips that had already
+    left, and then planning those buses onward from cities they never reached.
+    One bound, so it has to reach every derived list and every commit."""
+    before = client.get("/api/state").json()
+    assert before["today"] == TODAY.isoformat()
+    assert before["engine"]["out_of_scope"] == {}       # season still ahead
+
+    monkeypatch.setattr(api, "_today", lambda: MID_SEASON)
+    state = client.get("/api/state").json()
+    e = state["engine"]
+    started = {t for t, why in e["out_of_scope"].items() if why == "started"}
+    by_id = {t["id"]: t for t in state["trips"]}
+    assert started, "the reference season is under way by mid-September"
+    assert all(by_id[t]["start"] <= MID_SEASON.isoformat() for t in started)
+    assert not started & set(e["plan"]["covered"])
+    assert not started & set(e["suggestions_by_trip"])
+    assert not started & set(e["reachable"])
+    # Nothing DISAPPEARS: they are still rows, still on the board.
+    assert all(by_id[t]["assignment"] is None for t in started)
+
+    # And a commit writes none of them — it recomputes under the same bound.
+    assert client.post("/api/accept-plan").status_code == 200
+    after = {t["id"]: t["assignment"]
+             for t in client.get("/api/state").json()["trips"]}
+    assert all(after[t] is None for t in started)
+
+
+def test_the_plan_does_not_chain_through_trips_that_have_started(client, monkeypatch):
+    """The consequence that is easy to miss, pinned so it is not mistaken for
+    a broken engine. A chain extends from a bus's last RECORDED trip, and rule
+    1 gives it a few days to pick up the next one. In this workbook the last
+    recorded trip ends on 9 September; everything after that was only ever
+    reachable by chaining through uncovered trips. Ten days on, those have
+    started, so there is no plan at all — with uncovered trips still ahead.
+
+    That is the honest answer: the sheet no longer says where the buses are.
+    The old plan kept going only by pretending they had run trips that left
+    without them. Recording which bus really took a trip (by hand; see the
+    next test) is what gives the planner a tail to extend again."""
+    monkeypatch.setattr(api, "_today", lambda: date(2026, 9, 15))
+    state = client.get("/api/state").json()
+    e = state["engine"]
+    assert e["plan"]["chains"] == [] and e["suggestions_by_trip"] == {}
+    ahead = [t for t in state["trips"]
+             if not t["assignment"] and t["status"] != "Canceled"
+             and t["id"] not in e["out_of_scope"]]
+    assert ahead, "uncovered trips still lie ahead — the plan is empty anyway"
+    assert "started" in e["out_of_scope"].values()
+
+
+def test_a_started_trip_can_still_be_assigned_by_hand(client, monkeypatch):
+    """The bound says what the PLANNER decides, like the horizon does. A
+    dispatcher recording which bus actually ran a trip is not planning it, so
+    the board's drag still has somewhere to land and the assignment goes in."""
+    monkeypatch.setattr(api, "_today", lambda: MID_SEASON)
+    state = client.get("/api/state").json()
+    trip = min(t for t, why in state["engine"]["out_of_scope"].items()
+               if why == "started")
+    assert client.get(f"/api/drop-targets/{trip}").json()["targets"]
+
+    company = state["registry"]["companies"][0]["key"]
+    res = client.post("/api/accept", json={
+        "demand": trip, "company": company, "unit": None, "supply": None})
+    assert res.status_code == 200, res.text
+
+    state = client.get("/api/state").json()
+    assert next(t for t in state["trips"] if t["id"] == trip)["assignment"] == {
+        "company": company, "unit": None}
+    # Covered now, so no longer something the window left out.
+    assert trip not in state["engine"]["out_of_scope"]
+
+
+def test_a_locked_started_trip_is_reported_as_locked(client, monkeypatch):
+    """The two reasons are kept apart: a lock is somebody's decision and comes
+    off with a click, and a board that showed "already started" for a locked
+    trip would be explaining the wrong one."""
+    monkeypatch.setattr(api, "_today", lambda: MID_SEASON)
+    state = client.get("/api/state").json()
+    trip = min(t for t, why in state["engine"]["out_of_scope"].items()
+               if why == "started")
+    assert client.post(f"/api/trips/{trip}/lock",
+                       json={"locked": True}).status_code == 200
+    state = client.get("/api/state").json()
+    assert trip in state["locked"]
+    assert trip not in state["engine"]["out_of_scope"]
+
+
+def test_a_chain_whose_trips_have_started_is_refused_as_stale(client, monkeypatch):
+    """A board left open over the season still shows the chain it loaded with.
+    Accepting it must not write assignments onto trips that have since left:
+    the commit recomputes, finds no such chain, and says so."""
+    chain = client.get("/api/state").json()["engine"]["plan"]["chains"][0]
+    monkeypatch.setattr(api, "_today", lambda: date(2026, 11, 24))
+    res = client.post("/api/accept-chain", json={
+        "company": chain["company"], "unit": chain["unit"]})
+    assert res.status_code == 409
+    assert "no longer proposed" in res.json()["detail"]
+    assert client.get("/api/state").json()["undo"] is None      # nothing written
 
 
 # -- locks and the master re-chain -------------------------------------------

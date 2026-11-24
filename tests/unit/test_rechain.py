@@ -103,6 +103,42 @@ def test_horizon_includes_a_trip_starting_on_the_cutoff():
         report, REG, horizon=BASE + timedelta(days=3)).plan.covered == frozenset()
 
 
+def test_out_of_scope_says_which_end_of_the_window_left_a_trip_out():
+    """Three uncovered trips can lack a suggestion for reasons that have
+    nothing to do with the fleet: one has already started, one lies past the
+    horizon, one is locked. The first two are named with the bound that left
+    them out, because without that they look exactly like a trip no chain can
+    ever reach — no candidate, not reachable — and a board would say so."""
+    supply = mk_trip("STO", "OSL", 0, 2, company="ollex", unit=1)
+    started = mk_trip("OSL", "STO", 3, 5)         # begins ON as_of: under way
+    in_window = mk_trip("OSL", "STO", 4, 6)
+    far = mk_trip("OSL", "STO", 20, 22)
+    held = mk_trip("OSL", "STO", 2, 4)            # started too, but locked
+    result = engine.evaluate(
+        report_of(supply, started, in_window, far, held), REG,
+        locked={held.id},
+        as_of=BASE + timedelta(days=3), horizon=BASE + timedelta(days=10))
+
+    assert result.out_of_scope == {started.id: "started", far.id: "horizon"}
+    # The lock is that trip's reason, and it is reported on its own.
+    assert held.id not in result.out_of_scope
+    # The count is the map's "horizon" entries and nothing else.
+    assert result.beyond_horizon == 1
+    assert result.plan.covered == {in_window.id}
+
+
+def test_a_trip_both_started_and_past_the_horizon_is_reported_as_started():
+    """Only reachable with a horizon behind as_of, but the answer matters: no
+    widening of the window can bring a started trip back, so "started" is the
+    reason worth giving — and it must not be counted as beyond the horizon."""
+    trip = mk_trip("OSL", "STO", 5, 7)
+    result = engine.evaluate(
+        report_of(trip), REG,
+        as_of=BASE + timedelta(days=6), horizon=BASE + timedelta(days=2))
+    assert result.out_of_scope == {trip.id: "started"}
+    assert result.beyond_horizon == 0
+
+
 # -- what a re-chain may release --------------------------------------------
 
 def _build(report, **kw):

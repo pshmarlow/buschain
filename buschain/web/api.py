@@ -160,6 +160,14 @@ def _engine_json(result: EngineResult) -> dict[str, Any]:
         # on import day — the normal case, when the season starts more than a
         # month out — is indistinguishable from a fleet that can do nothing.
         "beyond_horizon": result.beyond_horizon,
+        # Trip by trip, and for both ends of the window: which uncovered trips
+        # the planner was not asked about, and why ("started" | "horizon"). The
+        # board labels each bar from this. Without it an out-of-scope trip has
+        # no candidate and is not reachable — indistinguishable, on screen,
+        # from one that no chain can ever reach.
+        "out_of_scope": {
+            _rid(t): why for t, why in sorted(result.out_of_scope.items())
+        },
         "plan": _plan_json(result.plan),
         # Units idle mid-chain longer than any chain window, and the uncovered
         # trips a manual drop could put there. Listed because the planner
@@ -206,12 +214,24 @@ def get_state(request: Request) -> dict[str, Any]:
     settings = repo.settings()
     report, registry, accepted = repo.load_state()
     locked = repo.locked_ids()
+    # Today is the near end of the planning window, as the horizon is the far
+    # one: a trip that has already started is not something the planner can
+    # still decide. This passed None until the season it was measured on had
+    # gone by, at which point the board was proposing buses for 113 trips that
+    # had all left — and mid-season it is worse than noise, because a bus
+    # "assigned" to a trip it never ran is then planned onward from the wrong
+    # city. The same bound _rechain uses, for the same reason.
+    today = _today()
     horizon = _horizon(settings)
     result = engine.evaluate(report, registry, accepted,
                              settings["objective"], settings["reposition"],
-                             locked, None, horizon)
+                             locked, today, horizon)
     return {
         "settings": settings,
+        # The day the planner counts from, for the same reason horizon_through
+        # is served below: the board has to say "already started (on or before
+        # …)" in the server's terms, not from the browser's own clock.
+        "today": today.isoformat(),
         # The resolved cutoff, so the toolbar can print the date it is planning
         # through instead of making the browser redo today + N and drift.
         "horizon_through": horizon.isoformat() if horizon else None,
@@ -675,9 +695,13 @@ def _current_plan(repo: Repo) -> Plan:
     """
     settings = repo.settings()
     report, registry, accepted = repo.load_state()
+    # Same two bounds as get_state, or a commit could write links the board
+    # never showed — including, across midnight, a chain whose first trip has
+    # since started. That chain is simply no longer in this plan, and the
+    # routes below refuse it as stale.
     result = engine.evaluate(report, registry, accepted,
                              settings["objective"], settings["reposition"],
-                             repo.locked_ids(), None, _horizon(settings))
+                             repo.locked_ids(), _today(), _horizon(settings))
     return result.plan
 
 
@@ -733,9 +757,12 @@ def _optimal(repo: Repo) -> tuple[Any, int]:
     settings = repo.settings()
     report, _, _ = repo.load_state()
     try:
+        # as_of as well as horizon: the solve is only meaningful next to the
+        # plan the board shows, and that plan leaves started trips out.
         return engine.optimal_plan(
             report, reposition=settings["reposition"], locked=repo.locked_ids(),
-            horizon=_horizon(settings), objective=settings["objective"])
+            as_of=_today(), horizon=_horizon(settings),
+            objective=settings["objective"])
     except engine.solve.SolverUnavailable as e:
         raise HTTPException(409, str(e)) from e
 

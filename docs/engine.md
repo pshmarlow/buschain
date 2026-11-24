@@ -88,6 +88,13 @@ The `EngineResult` fields, and who they're for:
 - `timelines`, `adhoc_by_company` — display.
 - `beyond_horizon` — how many uncovered trips the horizon put out of scope, so
   a UI can tell "the fleet can do nothing" from "you are not looking there yet".
+- `out_of_scope` — the same thing trip by trip, for both ends of the window:
+  each uncovered trip the planner was not asked about, mapped to `"started"`
+  (it begins on or before `as_of`) or `"horizon"` (it begins after the far
+  bound). A board labelling one bar needs it, because such a trip has no
+  suggestion and is not reachable — exactly what a trip no chain can ever
+  reach looks like. `beyond_horizon` is its count of `"horizon"` entries.
+  Locked trips are absent: the lock is their reason.
 
 (Canceled trips are dropped inside `_split` — rule 7: excluded from matching,
 retained for audit and as broken-chain roots.)
@@ -118,7 +125,33 @@ Supply is never cut. A bus that finished the day before the window opens is
 standing there ready, and dropping it would make the first trips in the window
 unreachable for no reason anybody asked for.
 
-Two consequences worth knowing before changing it:
+### The near end: trips that have already started
+
+`as_of` is the other end of the same window, and the web layer passes today's
+date for it everywhere the planner decides something: `/state`, the commit
+routes that recompute the plan, the exact solve, and (as before) re-chain and
+reclaim. A trip beginning on or before `as_of` is out of demand — "started" in
+`out_of_scope` — so it draws no suggestion and no plan link. The comparison is
+`<=`: a trip leaving today is already today's problem, the rule a re-chain has
+always used for what it may release.
+
+Like the horizon it cuts demand only and never the manual paths. Recording
+which bus actually ran a trip that has left is an assignment by hand, not a
+plan.
+
+The consequence is easy to mistake for a fault. A chain extends from a bus's
+*recorded* trips, so once the planner stops proposing for started trips it also
+stops chaining **through** them. If trips went out and the sheet was never told
+which bus took them, the fleet's last recorded arrivals fall more than a chain
+window behind everything still ahead, and there are no edges at all. Measured
+on the reference workbook (last recorded trip ends 2026-09-09, horizon
+unbounded): `as_of` 2026-09-05 gives 91 links; 2026-09-15 gives none, with 134
+uncovered trips still in scope. Before the near bound was passed, that plan
+kept going by assuming buses had run trips that left without them — and routed
+them onward from cities they had never reached. Assigning the real bus to a
+started trip restores a tail the planner can extend.
+
+Two consequences worth knowing before changing the horizon:
 
 - **Re-chain must not release past the cutoff** — see §8's fifth boundary.
 - **A horizon below 21 days makes reclaim a no-op**, because nothing is both

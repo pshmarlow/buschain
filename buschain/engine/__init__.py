@@ -14,7 +14,8 @@ from datetime import date
 from typing import AbstractSet, Sequence
 
 from ..model import (
-    AcceptedLink, ContractReport, EngineResult, Registry, Status, Trip, TripId,
+    AcceptedLink, ContractReport, EngineResult, Registry, Scope, Status, Trip,
+    TripId,
 )
 from . import checks, graph, parked, plan as plan_mod, reach, solve, suggest
 
@@ -51,7 +52,7 @@ def evaluate(
     """
     trips_by_id: dict[TripId, Trip] = {t.id: t for t in report.trips}
     (assigned_live, supply_trips, demand_trips,
-     unit_assignments, adhoc_by_company, beyond_horizon) = _split(
+     unit_assignments, adhoc_by_company, out_of_scope) = _split(
         report, locked, as_of, horizon)
 
     # Repositioning defaults on: without it a parked bus offers nothing, which
@@ -92,7 +93,10 @@ def evaluate(
         # Reported, never planned: the idle blocks the tail-only rule hides
         # from the planner. Same reposition switch as everything above.
         parked=parked.windows(demand_trips, unit_assignments, reposition),
-        beyond_horizon=beyond_horizon,
+        out_of_scope=out_of_scope,
+        # The same fact as a number, for the callers that only ever needed
+        # one. Derived here from the map so the two cannot disagree.
+        beyond_horizon=sum(1 for why in out_of_scope.values() if why == "horizon"),
     )
 
 
@@ -197,17 +201,33 @@ def _split(report: ContractReport, locked: AbstractSet[TripId],
     # nothing to accept. It keeps its place on its unit's timeline and, when
     # assigned, still feeds the next hop — locking says "do not re-decide this
     # trip", not "pretend this bus is not there".
-    in_play = [
-        t for t in live
-        if t.assignment is None and t.id not in locked
-        and (as_of is None or t.start > as_of)
-    ]
-    # The horizon is applied last and its casualties counted, because "no plan"
-    # and "no plan yet" are different answers and only this line knows which one
-    # a caller is looking at. Note `<=`: a bound of today+30 includes the trip
-    # on day 30 — the preset says "a month ahead", not "a month minus one".
-    demand_trips = [t for t in in_play if horizon is None or t.start <= horizon]
-    beyond_horizon = len(in_play) - len(demand_trips)
+    #
+    # The two date bounds come after the lock, and every trip they turn away is
+    # RECORDED with the end of the window that did it. "No bus can reach this
+    # trip", "too late to plan it" and "not looking that far yet" are three
+    # different answers, and only this loop knows which one a trip got. A
+    # count was enough while the horizon was the only bound a caller used; it
+    # is not once a board has to label each bar, because every out-of-scope
+    # trip otherwise reads as "no chain will ever reach this" — a verdict about
+    # the fleet, for a trip nobody asked the fleet about.
+    #
+    # Started is tested first: a trip that is both under way and past the
+    # horizon (a horizon behind as_of) cannot be planned whatever the window is
+    # widened to, so that is the reason worth giving. Note the comparisons —
+    # `<=` as_of because a trip beginning today is already today's problem, and
+    # `>` horizon because a bound of today+30 includes the trip on day 30: the
+    # preset says "a month ahead", not "a month minus one".
+    out_of_scope: dict[TripId, Scope] = {}
+    demand_trips: list[Trip] = []
+    for t in live:
+        if t.assignment is not None or t.id in locked:
+            continue
+        if as_of is not None and t.start <= as_of:
+            out_of_scope[t.id] = "started"
+        elif horizon is not None and t.start > horizon:
+            out_of_scope[t.id] = "horizon"
+        else:
+            demand_trips.append(t)
 
     unit_assignments: dict[tuple[str, int], list[Trip]] = defaultdict(list)
     adhoc_by_company: dict[str, list[Trip]] = defaultdict(list)
@@ -218,7 +238,7 @@ def _split(report: ContractReport, locked: AbstractSet[TripId],
         else:
             adhoc_by_company[t.assignment.company].append(t)
     return (assigned_live, supply_trips, demand_trips, unit_assignments,
-            adhoc_by_company, beyond_horizon)
+            adhoc_by_company, out_of_scope)
 
 
 def optimal_plan(

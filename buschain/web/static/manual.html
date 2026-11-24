@@ -877,7 +877,7 @@
   <tr><th>Fill / edge</th><th>Meaning</th></tr>
   <tr><td>Solid, bold text</td><td>Uncovered and actionable: no bus yet, and the planner has at least one candidate for it.</td></tr>
   <tr><td>Dashed edge</td><td>Opens up later. No candidate <em>today</em>, but some sequence of accepts could reach it. It is waiting on an earlier decision.</td></tr>
-  <tr><td>Dotted edge, faded</td><td>No same-city chain reaches it. It needs an ad hoc bus, a subcontractor, or an empty run.</td></tr>
+  <tr><td>Dotted edge, faded</td><td>Nothing the planner will do here, for one of three reasons — hover the bar and it says which. <strong>No same-city chain reaches it</strong>: it needs an ad hoc bus, a subcontractor, or an empty run. <strong>Already started</strong>: the planner leaves a trip alone from its start date on. <strong>Outside the plan-ahead window</strong>: it starts later than <em>Plan ahead</em> (Suggestions tab) is set to look, and is simply not being planned yet.</td></tr>
   <tr><td>Diagonal hatching</td><td>Planned — the plan proposes a bus, nothing is written. Hatching always means provisional; a solid bar is real.</td></tr>
   <tr><td>Tighter hatching, dotted edge</td><td>Planned, but the bus must be driven over empty first.</td></tr>
   <tr><td>Purple row band</td><td>The ad hoc lane: assigned to a company, not a bus. The band marks the lane; the bars in it still show their own status.</td></tr>
@@ -917,7 +917,14 @@
       and misses by 2 days.”</em> — followed by whether a chain could
       <em>ever</em> reach the trip or not. Those two facts lead to different
       actions, so they are stated separately.</li>
-  <li>Always, at the bottom: <strong>Assign by hand, outside the plan</strong>.</li>
+  <li>If the planner is not looking at the trip at all — it has <strong>already
+      started</strong>, or it starts after the <strong>plan-ahead
+      window</strong> — the panel says exactly that and stops. No bus was asked,
+      so there is no rule to quote, and nothing here means you need to hire
+      one.</li>
+  <li>Always, at the bottom: <strong>Assign by hand, outside the plan</strong>
+      — for a trip that has already left, this is how you record which bus
+      really ran it.</li>
 </ul>
 
 <h3>7.5 Selecting an <em>assigned</em> trip</h3>
@@ -1367,6 +1374,18 @@
       fleet is parked where nothing departs. Otherwise it means every uncovered
       trip needs a bus that is already committed elsewhere; the summary says
       which case it is.</dd>
+
+  <dt>The plan is empty, or stops short, and the summary says trips have
+      “already started”.</dt>
+  <dd>The planner leaves a trip alone from its start date on — it will not
+      propose a bus for something that has left. It also only ever continues a
+      chain from a bus's <em>recorded</em> trips, with a few days' reach. So if
+      trips went out and the sheet was never told which bus took them, the
+      records stop short of everything still ahead and there is nothing to
+      chain from: the fleet is not busy, it is unaccounted for. Select those
+      trips and use <em>Assign by hand</em> (or type the bus into the Company
+      cell on the Data tab). Each one you record gives the planner a bus in a
+      known place, and the plan picks up from there.</dd>
 
   <dt>The plan covers far fewer trips than are “reachable”.</dt>
   <dd>Reachability ignores contention — it answers “could a chain ever get

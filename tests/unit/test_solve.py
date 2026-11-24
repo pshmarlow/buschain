@@ -110,9 +110,16 @@ def test_gap_insert_is_used_and_valid():
 
 
 @pytest.fixture
-def client(tmp_path, workbook_bytes):
+def client(tmp_path, workbook_bytes, monkeypatch):
+    from datetime import date
     from fastapi.testclient import TestClient
+    from buschain.web import api
     from buschain.web.app import create_app
+    # The planner leaves started trips alone, and the reference season is
+    # fixed — so against the real clock, once that season has passed, there is
+    # nothing left to solve and every comparison below is 0 against 0. Same
+    # pin, same date and same reason as TODAY in test_api.py.
+    monkeypatch.setattr(api, "_today", lambda: date(2026, 8, 1))
     app = create_app(tmp_path / "solve-api.db")
     with TestClient(app) as c:
         res = c.post("/api/import", files={
@@ -135,6 +142,19 @@ def test_optimal_preview_reports_both_sides(client):
     # The greedy figure must be the same one the board shows.
     state = client.get("/api/state").json()
     assert preview["greedy_covered"] == len(state["engine"]["plan"]["covered"])
+
+
+def test_optimal_preview_leaves_started_trips_out(client, monkeypatch):
+    """The solve has to stand next to the plan the board shows, and that plan
+    leaves trips that have already started alone. With the whole reference
+    season behind us there is nothing to cover on either side — where there
+    used to be 113 against 124, all of it for trips that had already left."""
+    from datetime import date
+    from buschain.web import api
+    monkeypatch.setattr(api, "_today", lambda: date(2026, 11, 24))
+    preview = client.get("/api/optimal-plan").json()
+    assert preview["greedy_covered"] == 0
+    assert preview["plan"]["chains"] == []
 
 
 def test_optimal_apply_commits_and_one_undo_reverses(client):

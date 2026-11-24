@@ -441,6 +441,35 @@ Key decisions worth knowing before editing:
   dates rather than day counts. A planner that consulted `date.today()` itself
   would stop being a pure function of its inputs — the same state would produce
   different plans on different days and no test could pin either.
+- **The planner leaves a trip alone from its start date on.** The live plan,
+  the one-hop candidates and the exact solve all take today as the near end of
+  the window (`as_of`, the bound a re-chain already used), so a trip that has
+  started draws no proposal and no commit writes one. Before this `/state`
+  passed no near bound at all: once the reference season had gone by, the board
+  proposed buses for 113 trips that had all left, and mid-season it was worse
+  than noise — a bus "planned" onto a trip it never ran was then routed onward
+  from a city it never reached. Manual assignment is untouched, as with the
+  horizon below: recording which bus really ran a trip is not planning it.
+  **The consequence to know:** a chain only extends from a bus's *recorded*
+  trips, so the plan no longer chains *through* trips that have left unassigned.
+  On the reference workbook the last recorded trip ends 2026-09-09; pinned to
+  the 5th the plan has 91 links, pinned to the 15th it has none, with 134
+  uncovered trips still ahead (the empty case is pinned in `test_api.py`). That
+  is the honest
+  answer — the sheet has stopped saying where the buses are — and the summary
+  says so in those words rather than blaming capacity. Assigning the bus that
+  actually ran a started trip is what gives the planner a tail to extend again.
+- **Every trip the window leaves out is named, with the end that left it out.**
+  `EngineResult.out_of_scope` maps each such trip to `"started"` or `"horizon"`
+  (`beyond_horizon` is its count of the latter). The board needs it per trip:
+  an out-of-scope trip has no candidate and is not reachable, which is exactly
+  how a trip no chain can ever reach looks, and until this existed that is what
+  every bar and every panel said about it — on the default month, 187 of the
+  reference workbook's 190 uncovered trips were labelled "needs an ad hoc bus
+  or a subcontractor" for being a few weeks out. Every surface that explains
+  an uncovered trip asks `outOfScope` before it reasons about rules, as it asks
+  `isLocked`; locked trips are deliberately absent from the map, because the
+  lock is their reason.
 - **The planner only commits a month ahead, and that is a setting.** *Plan
   ahead* (2 weeks / 1 month / 3 months / All, stored as `plan_horizon`,
   default a month) bounds how far out the engine will decide anything: an

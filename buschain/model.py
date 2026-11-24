@@ -271,6 +271,12 @@ class Plan:
     idle_days: int
 
 
+# Which end of the planning window left an uncovered trip out of demand:
+# "started" — it begins on or before as_of, so there is nothing left to decide;
+# "horizon" — it begins after the far bound, so nothing has been decided yet.
+Scope = Literal["started", "horizon"]
+
+
 @dataclass(frozen=True)
 class EngineResult:
     suggestions_by_unit: Mapping[tuple[str, int], tuple[Suggestion, ...]]
@@ -294,11 +300,20 @@ class EngineResult:
     # trips a manual drop could put there (engine/parked.py). Listed, never
     # proposed: the planner's cross-city moves are tail-only by rule.
     parked: tuple[ParkedWindow, ...] = ()
-    # Uncovered trips the planning horizon put out of scope. A count, not a
-    # list: its only job is to let a UI say why an empty plan is empty. Without
-    # it a horizon that lands before the season starts is indistinguishable
-    # from a fleet with nothing to offer, and the first looks like a bug.
+    # Uncovered trips the planning horizon put out of scope, as a count: what
+    # lets a UI say why an empty plan is empty. Without it a horizon that lands
+    # before the season starts is indistinguishable from a fleet with nothing
+    # to offer, and the first looks like a bug. The number of "horizon" entries
+    # in out_of_scope below, kept for the callers that need only the number.
     beyond_horizon: int = 0
+    # The same thing trip by trip, for BOTH ends of the planning window: every
+    # uncovered trip the planner was not asked about, and which bound left it
+    # out. A board labelling a single bar needs to know that this trip has
+    # already started, or lies past the horizon — without it, an out-of-scope
+    # trip has no suggestion and is not reachable, which is exactly how a trip
+    # no chain can ever reach looks. Locked trips are absent: the lock is the
+    # reason for those, and it is reported on its own.
+    out_of_scope: Mapping[TripId, Scope] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)

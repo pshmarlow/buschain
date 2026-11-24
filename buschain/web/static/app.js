@@ -74,6 +74,11 @@ async function _refreshNow() {
   // link, every label), so the lookup has to be a hash, not a scan.
   S._byId = new Map(S.trips.map((t) => [t.id, t]));
   S._locked = new Set(S.locked || []);
+  // Uncovered trips the planning window left out, each with the end of it
+  // that did ("started" | "horizon"). The server's verdict, as with locks:
+  // re-deriving it here would mean a second copy of the demand rule and of
+  // both cutoffs, in a browser whose clock is not the one the plan used.
+  S._scope = new Map(Object.entries((S.engine && S.engine.out_of_scope) || {}));
   // Ticks on rows that left their table are dropped, not carried: a repaired
   // row moves from non-operable to operable, and its old tick surviving there
   // would put it in a delete batch nobody can see anymore. (SELECTED is
@@ -1504,6 +1509,43 @@ function beyondHorizon() {
   return (S.engine && S.engine.beyond_horizon) || 0;
 }
 
+/* Why the planner is not considering an uncovered trip at all — "started" (it
+   began on or before today) or "horizon" (it begins after the plan-ahead
+   window) — or undefined when it IS being considered.
+
+   Every surface that explains an uncovered trip has to ask this before it
+   reasons about rules, exactly as it asks isLocked: such a trip was never put
+   to the fleet, so it has no candidate and is not reachable, and those two
+   facts are precisely what "no chain can ever reach this" looks like. Until
+   this existed the board said just that about every trip beyond the window —
+   187 of the reference workbook's 190 on the default month — and sent people
+   looking for an ad hoc bus for work that was merely not being planned yet. */
+const outOfScope = (id) => S._scope.get(id);
+
+/* What to say about one, wherever a single trip is being described. */
+const SCOPE_NOTE = {
+  started: "already started — the planner leaves it alone",
+  horizon: "outside the plan-ahead window — not being planned yet",
+};
+
+const startedCount = perState(() =>
+  [...S._scope.values()].filter((why) => why === "started").length);
+
+/* The other end of the window from horizonHint, and the same job: a plan that
+   is short or empty because trips have already left must say so, or it reads
+   as a fleet that cannot cope. Worded as a fact rather than a fault — these
+   are still rows, still on the board, and recording which bus really ran one
+   is an ordinary assignment by hand. */
+function startedHint(box) {
+  const started = startedCount();
+  if (!started) return;
+  box.append(el("p", { class: "hint" },
+    `${plural(started, "uncovered trip")} already started (on or before `
+    + `${S.today}), so the planner leaves ${started === 1 ? "it" : "them"} alone. `
+    + "Still listed everywhere else, and can still be assigned by hand — which "
+    + "is also what tells the planner where that bus is now."));
+}
+
 /* The one message that turns an empty board back into an explicable one. On
    import day the season usually starts more than a month out, so the default
    window is genuinely empty — and without this the summary blames the fleet
@@ -1532,24 +1574,42 @@ function renderPlanSummary() {
        nothing to do, nothing in scope, nothing chainable in a window that hid
        some, or a fleet with no room. The two middle ones are why this is split
        at all — blaming the fleet for a window the dispatcher set sends people
-       hunting a capacity problem that is not there. */
-    const inScope = uncovered - beyondHorizon();
+       hunting a capacity problem that is not there. "In scope" has two edges:
+       trips past the plan-ahead window, and trips that have already started. */
+    const inScope = uncovered - beyondHorizon() - startedCount();
     box.append(el("span", {}, !uncovered
       ? "Nothing uncovered — no plan needed."
       : !inScope
-        ? "Nothing to plan inside the plan-ahead window."
-        : beyondHorizon()
+        /* The first wording is word for word what this said before started
+           trips were left out, and still what it says when none have. */
+        ? (startedCount()
+          ? "Nothing left to plan: every uncovered trip has already started"
+            + (beyondHorizon() ? " or lies outside the plan-ahead window." : ".")
+          : "Nothing to plan inside the plan-ahead window.")
+        : beyondHorizon() || startedCount()
           /* Naming the count only matters when the window hid some: "no chain
              from 190 uncovered trips" reads as a failing fleet when 186 of them
-             were never considered. */
+             were never considered. "Still ahead" is for Plan ahead: All, where
+             started trips are the only ones left out and there is no window
+             to be inside of. */
           ? `No chain can be built from the ${plural(inScope, "uncovered trip")} `
-            + "inside the plan-ahead window. Each needs a bus that is not "
-            + "already committed elsewhere."
+            + (beyondHorizon() ? "inside the plan-ahead window" : "still ahead")
+            /* Once trips have started, "committed elsewhere" is usually the
+               wrong culprit. A chain extends from a bus's recorded trips, and
+               when the sheet has not been told which bus ran the ones that
+               left, those records stop days short of everything still ahead
+               — the fleet is not busy, it is unaccounted for. Blaming
+               capacity sends people to hire buses; the hint below says what
+               actually moves the plan on. */
+            + (startedCount()
+              ? ": none is within reach of any bus's recorded trips."
+              : ". Each needs a bus that is not already committed elsewhere.")
           /* Word for word what this said before the horizon existed. With
              nothing out of scope the panel has to say what it always said, or
              "Plan ahead: All" stops meaning "as before". */
           : "No chain can be built from the currently assigned units. Every uncovered "
             + "trip needs a bus that is not already committed elsewhere."));
+    startedHint(box);
     horizonHint(box);
     /* With empty runs off, a bus can only ever take a trip departing where it
        last arrived, and most of the fleet is parked where nothing departs. That
@@ -1599,6 +1659,7 @@ function renderPlanSummary() {
   }
   /* Also on a non-empty plan: "12 of 190 uncovered trips" reads as a fleet
      that can barely cope when most of the 190 were never considered. */
+  startedHint(box);
   horizonHint(box);
 }
 
@@ -2115,7 +2176,15 @@ function boardRows() {
   const reach = reachableSet();
   const later = loose.filter(
     (t) => !S.engine.suggestions_by_trip[t.id] && reach.has(t.id));
-  const never = loose.length - actionable.length - later.length;
+  /* Counted apart from "no chain", which they would otherwise swell: a trip
+     outside the planning window has no candidate and is not reachable, but
+     nobody asked the fleet about it — and "187 no chain" on the default month
+     is a capacity alarm for trips that are simply not being planned yet. */
+  const started = loose.filter((t) => outOfScope(t.id) === "started").length;
+  const beyond = loose.filter((t) => outOfScope(t.id) === "horizon").length;
+  const never = loose.length - actionable.length - later.length - started - beyond;
+  const scopeNote = (started ? ` · ${started} already started` : "")
+    + (beyond ? ` · ${beyond} outside the window` : "");
   const plannedCount = uncovered.length - loose.length;
   /* The actionable default exists to stop un-actionable bars burying the
      chains — but when NOTHING is actionable it hides the entire row, and a
@@ -2136,6 +2205,7 @@ function boardRows() {
     kind: "uncovered", key: "uncovered", label: "Uncovered",
     note: (ALL_UNCOVERED
       ? `${actionable.length} now · ${later.length} later · ${never} no chain`
+        + scopeNote
       : noneActionable
       ? `${loose.length} uncovered · none the planner can act on — `
         + "select one to assign it by hand"
@@ -2404,8 +2474,11 @@ function unitIdleReason(unitKey, unitTrips, uncovered) {
   if (!unitTrips.length) return null;
   // Locked trips are not demand the server ever considered, so measuring
   // them here would diagnose a "booked" or "stranded" state off trips the
-  // lock — not a rule — put out of reach.
-  uncovered = uncovered.filter((t) => !isLocked(t.id));
+  // lock — not a rule — put out of reach. Trips outside the planning window
+  // are the same case for the same reason: this bus was never offered them,
+  // so "2 days short of the nearest departure" about one that has already
+  // left would be an explanation of a decision nobody made.
+  uncovered = uncovered.filter((t) => !isLocked(t.id) && !outOfScope(t.id));
 
   /* With empty runs off the engine never looks at a cross-city departure, so
      neither may this: measuring one against its pair window would report a miss
@@ -2563,6 +2636,14 @@ function tripBar(t, row, laneIdx, isOverlap, ctx) {
     // and the LOCKED note appended below is the true state.
     if (isLocked(t.id)) {
       /* note stays empty */
+    } else if (outOfScope(t.id)) {
+      // Not put to the fleet at all, so the three states below do not apply
+      // — least of all the last, which is what its missing candidate and
+      // missing reachability would otherwise be read as. It shares that
+      // state's look (faded: nothing here for the planner to do) and says
+      // its own reason.
+      cls.push("never");
+      note = ` · ${SCOPE_NOTE[outOfScope(t.id)]}`;
     } else if (S.engine.suggestions_by_trip[t.id]) {
       note = " · has options now";
     } else if (ctx.reachable.has(t.id)) {
@@ -3262,6 +3343,24 @@ function detailBody(box, sel, t) {
       box.append(el("p", { class: "hint" },
         "Locked — held out of all chaining, so it has no candidates by "
         + "design. Unlock it to see them."));
+      return;
+    }
+    const scope = sel.role === "demand" ? outOfScope(t.id) : undefined;
+    if (scope) {
+      // Same shape as the lock above: no candidates because the trip was
+      // never put to the fleet, so noChainReason — which assumes the engine
+      // looked and found nothing — would invent a rule that refused it, and
+      // the verdict under it would send someone to hire a bus. The bus picker
+      // is appended after this returns (renderBoardDetail), so the trip can
+      // still be given one by hand.
+      box.append(el("p", { class: "hint" }, scope === "started"
+        ? `Already started (on or before ${S.today}), so the planner leaves it `
+          + "alone and offers no candidates. If a bus did run it, assign that "
+          + "bus below: it records the trip and tells the planner where the "
+          + "bus is now."
+        : `Outside the plan-ahead window (after ${S.horizon_through}), so it is `
+          + "not being planned yet and has no candidates. Widen the window to "
+          + "plan it, or assign a bus below."));
       return;
     }
     if (sel.role !== "demand") {
