@@ -1633,3 +1633,39 @@ def test_reclaim_refuses_to_cancel_a_numbered_assignment(client):
         if f"{t.id.origin}:{t.id.key}" == numbered["id"])
     with pytest.raises(RepoError, match="bare-company"):
         repo.reclaim_adhoc({tid}, [(tid, "ollex", 1, None)])
+
+
+# -- the static page ---------------------------------------------------------
+
+@pytest.fixture
+def page(tmp_path):
+    """The app with nothing imported: these tests are about how the page's own
+    files are served, so they need no workbook and must not depend on one."""
+    with TestClient(create_app(tmp_path / "page.db")) as c:
+        yield c
+
+
+def test_page_and_script_must_be_revalidated(page):
+    """index.html and app.js are a pair — the script looks its controls up by
+    id — so neither may be reused on the browser's own guess. Without the
+    header Chrome served a stale index.html beside a new app.js (2026-11-24)."""
+    for path in ("/", "/app.js", "/rules.js", "/style.css"):
+        res = page.get(path)
+        assert res.status_code == 200, path
+        assert res.headers["cache-control"] == "no-cache", path
+
+
+def test_unchanged_file_still_answers_304_and_keeps_the_header(page):
+    """no-cache must not cost a full download per load: the conditional request
+    still gets an empty 304. And the 304 carries the header too — it is what
+    refreshes the stored copy's instructions."""
+    etag = page.get("/app.js").headers["etag"]
+    res = page.get("/app.js", headers={"If-None-Match": etag})
+    assert res.status_code == 304
+    assert res.content == b""
+    assert res.headers["cache-control"] == "no-cache"
+
+
+def test_missing_static_file_is_still_a_404(page):
+    """The override only decorates a response that exists."""
+    assert page.get("/no-such-file.js").status_code == 404
