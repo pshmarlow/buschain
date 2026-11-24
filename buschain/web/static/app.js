@@ -4250,7 +4250,7 @@ function renderPastePicker() {
   // with a different layout does re-derive the picker. Keyed on the titles
   // rather than "built once": a stale picker would send the previous
   // layout's titles with every paste.
-  const sig = S.columns.join(" ");
+  const sig = S.columns.join("\0");
   if (box.dataset.sig === sig) return;
   box.dataset.sig = sig;
   box.replaceChildren();
