@@ -10,20 +10,24 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Literal, Mapping
 
-# The sheet every codec reads and writes. One list because the name was
-# previously spelled in four places (reader, writer, both csv paths) — the same
-# drift hazard the column letters below already solved.
+# The trip sheet is the workbook's FIRST TAB, whatever it is called. Every
+# codec applies that one rule — the reader takes tab 1, the xlsx writer patches
+# tab 1, the csv export renders tab 1 — and none of them looks at its name.
 #
-# Several names because the workbook is re-cut every season and the tab is
-# renamed with it ('Capitals 2026' became 'CAPITALS'). The reader takes
-# whichever of these the workbook actually has and the writer patches that same
-# one, so a season rename is a one-line edit here rather than a failed import.
-# The layout check below is what actually guarantees we read the right sheet;
-# the name only has to find it.
-SHEET_NAMES: tuple[str, ...] = ("Capitals 2026", "CAPITALS")
-# The name a codec CREATES a sheet with (csv -> xlsx), where there is no
-# existing workbook to take it from.
-SHEET_NAME = SHEET_NAMES[0]
+# It used to be found by name, from a list kept here: the workbook is re-cut
+# every season and the tab renamed with it ('Capitals 2026' became 'CAPITALS'),
+# so each new season was a refused import until its name had been added. The
+# list was never what made the read safe, though. The reader's row-1 layout
+# check is, and it still stands: a workbook whose first tab is something else
+# is refused, with that tab named, rather than read one tab off.
+#
+# The Information sheet is the opposite case and IS found by name (INFO_SHEET
+# below): nobody promised it a position, and its name does not change.
+#
+# So all that is left here is the name a codec CREATES a sheet with (csv ->
+# xlsx), where there is no existing workbook to take one from. Nothing reads
+# by it.
+SHEET_NAME = "Capitals 2026"
 
 # The interchange layout of the trip sheet, header row 1, in order.
 # Everything else here derives from this list, so a layout change (the sheet

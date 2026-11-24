@@ -404,6 +404,26 @@ def test_csv_import_and_exports(tmp_path):
             assert any(n.startswith("xl/worksheets/") for n in zf.namelist())
 
 
+def test_csv_export_works_whatever_the_trip_tab_is_called(tmp_path):
+    """The bug that started the first-tab rule. The season's workbook renamed
+    its trip tab ('Capitals 2026' -> 'CAPITALS'); the reader and the xlsx
+    writer coped, and the csv export — which looked the tab up under the old
+    name — answered 500 for exactly the file the app had just imported.
+
+    Run against the repo's own new-season workbook, which is what surfaced it
+    — so that file is a fixture from here on, like the reference workbook."""
+    from pathlib import Path
+    winter = Path(__file__).resolve().parents[2] / "CAPITALS WINTER.xlsx"
+    app = create_app(tmp_path / "winter.db")
+    with TestClient(app) as c:
+        res = c.post("/api/import", files={
+            "file": (winter.name, winter.read_bytes(), "application/octet-stream")})
+        assert res.status_code == 200, res.text
+        csv_out = c.get("/api/export.csv")
+        assert csv_out.status_code == 200, csv_out.text
+        assert csv_out.text.startswith("Status,Project")
+
+
 def test_edit_free_text_cell_roundtrips_to_export(client, workbook_bytes):
     """A passthrough column is editable and its edit reaches the xlsx, without
     disturbing any other cell."""

@@ -18,7 +18,7 @@ import openpyxl
 from openpyxl.utils.exceptions import InvalidFileException
 
 from .. import normalize
-from .types import ALL_COLUMNS, COLUMN_ORDER, ImportedDataset, RawTripRow, SHEET_NAMES
+from .types import ALL_COLUMNS, COLUMN_ORDER, ImportedDataset, RawTripRow
 
 HEADER_ROW = 1
 # A row "has content" iff any contract-layout cell is non-empty. The legacy
@@ -37,28 +37,47 @@ def read(blob: bytes) -> ImportedDataset:
     # instead of the import error they are.
     except (zipfile.BadZipFile, KeyError, InvalidFileException) as e:
         raise ValueError(f"Not a readable .xlsx workbook ({e})") from e
-    sheet_name = next((n for n in SHEET_NAMES if n in wb.sheetnames), None)
-    if sheet_name is None:
-        names = " or ".join(repr(n) for n in SHEET_NAMES)
-        raise ValueError(
-            f"Workbook has no sheet named {names} (found: "
-            f"{', '.join(repr(n) for n in wb.sheetnames)})"
-        )
+    # The trip sheet is the first tab, whatever it is called (types.SHEET_NAME
+    # says why it is no longer found by name). "First" is the workbook's own
+    # tab order with hidden tabs and chart tabs counted, because that is the
+    # order the xlsx writer reads out of workbook.xml — counting any other way
+    # here would let the export patch a different tab from the one read.
+    tabs = wb.sheetnames
+    if not tabs:
+        raise ValueError("Workbook has no sheets")
+    sheet_name = tabs[0]
+    # Every refusal below lists the tabs: the rule is positional, and a first
+    # tab that is hidden in Excel is otherwise impossible to find from here.
+    listing = ", ".join(repr(n) for n in tabs)
     ws = wb[sheet_name]
+    # A chart tab has no cells. openpyxl loads one as its own type even in
+    # read-only mode, and iter_rows on it is an AttributeError — a 500 for
+    # what is simply the wrong file.
+    if ws not in wb.worksheets:
+        raise ValueError(
+            f"The first tab, {sheet_name!r}, is a chart, not the trip sheet. "
+            f"Trips are read from the first tab; this workbook's tabs are: {listing}"
+        )
 
     # The values below are read positionally, so row 1 must actually be the
     # contract layout. Without this check a workbook with one inserted column
     # imports every value one slot off — dates still look like dates, so it
     # can pass validation — and the export then splices assignments into
     # whatever column drifted under 'Company name'.
+    #
+    # It is also the ONLY thing that says the first tab is the trip sheet, now
+    # that the tab's name is not consulted: a workbook with some other tab in
+    # front fails here, loudly, instead of importing whatever that tab holds.
     header = next(ws.iter_rows(min_row=HEADER_ROW, max_row=HEADER_ROW,
                                max_col=_CONTENT_COLS, values_only=True), ())
     got = ["" if c is None else normalize.casefold_key(str(c)) for c in header]
     expected = [normalize.casefold_key(t) for t in COLUMN_ORDER]
     if got != expected:
         raise ValueError(
-            f"Sheet {sheet_name!r} row 1 is not the contract layout; expected "
-            f"{list(COLUMN_ORDER)}, got {[str(c or '') for c in header]}"
+            f"The first tab, {sheet_name!r}, is not the trip sheet: its row 1 "
+            f"is not the contract layout; expected {list(COLUMN_ORDER)}, got "
+            f"{[str(c or '') for c in header]}. Trips are read from the first "
+            f"tab; this workbook's tabs are: {listing}"
         )
 
     rows: list[RawTripRow] = []

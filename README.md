@@ -283,13 +283,24 @@ Key decisions worth knowing before editing:
   deliberately excluded from `INFO_OPTION_COLS` so the two paths cannot be
   confused. `seed.DEFAULT_CITIES` is now only the fallback for a workbook
   that heads no Cities column.
-- **The trip sheet is found by name from a list, then proved by its header.**
-  The tab is renamed every season (`Capitals 2026` → `CAPITALS`), so
-  `SHEET_NAMES` holds the accepted names and the reader takes whichever the
-  workbook has; the writer resolves the same way, so the export patches the
-  sheet the data came from. The name only has to *find* the sheet — the row-1
-  layout check is what guarantees it is the right one, and it is the tripwire
-  that stops a shifted column importing every value one slot off.
+- **The trip sheet is the first tab, whatever it is called, and is proved by
+  its header.** The tab is renamed every season (`Capitals 2026` →
+  `CAPITALS`), and finding it by name — from a list of accepted names, which
+  is how this used to work — made every new season a refused import until its
+  name had been added to the code. Position is what stays put. All three
+  codecs apply the one rule: the reader takes tab 1, the xlsx writer patches
+  tab 1 (the first `<sheet>` in `workbook.xml`), the csv export renders tab 1,
+  and `test_xlsx_reader.py` pins them to each other, because a writer that
+  disagreed with the reader would splice assignments into a tab the trips were
+  never read from. The row-1 layout check is unchanged and is now the *only*
+  thing that says the tab is the right one: a workbook with some other tab in
+  front — a notes sheet, a chart, a hidden tab — is refused with that tab
+  named and the others listed, never read one tab off. It is deliberately not
+  rescued by searching the later tabs for the header; the fix is to drag one
+  tab in Excel, and a rule with a fallback is two rules. The same check is
+  still the tripwire that stops a shifted column importing every value one
+  slot off. The `Information` sheet is the opposite case and *is* found by
+  name: nobody promised it a position, and its name does not change.
 - **Renaming a company rewrites the data, not just the registry.** A trip
   carries its company as *text* (`Ollex 1` in Company name, `NO Ollex` in Bus
   Preference) and the contract resolves that text, so moving only the

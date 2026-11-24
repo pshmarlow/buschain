@@ -122,13 +122,15 @@
 <h3>2.2 Import the workbook</h3>
 <p>
   On the <strong>Data</strong> tab press <em>Import xlsx/csv</em> and pick your
-  planner file. The app reads the trip sheet — named <code>Capitals 2026</code>
-  or <code>CAPITALS</code>, since the tab gets renamed each season — with the
-  header on row 1. If a season arrives under a name it does not know, the
-  import says so and names the sheets it did find; adding the new name is a
-  one-line change. The header row is checked either way, so the app will
-  refuse a sheet whose columns have shifted rather than read every value one
-  slot off.
+  planner file. The app reads the trips from the <strong>first tab</strong> of
+  the workbook, whatever that tab is called — it gets renamed each season, and
+  the name does not matter — with the header on row 1. If some other tab sits
+  in front of the trips (a notes sheet, a chart, or a hidden tab), the import
+  says so, names that tab and lists the others; drag the trip tab to the front
+  in Excel and import again. The header row is checked either way, so the app
+  will refuse a sheet whose columns have shifted rather than read every value
+  one slot off. The <code>Information</code> sheet is found by its name and can
+  sit anywhere after the trips.
 </p>
 <p>
   Importing <strong>replaces</strong> the current working dataset, so you are

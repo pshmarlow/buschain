@@ -73,12 +73,22 @@ def _cell_text(value: object) -> str:
     return str(value)
 
 
-def render_workbook_csv(xlsx_bytes: bytes, sheet_name: str = SHEET_NAME) -> str:
+def render_workbook_csv(xlsx_bytes: bytes) -> str:
     """CSV export for xlsx-sourced datasets: rendered FROM the (already
     patched) workbook so the csv always equals what the xlsx export says —
     one rendering path, no second source of truth."""
     wb = openpyxl.load_workbook(io.BytesIO(xlsx_bytes), read_only=True, data_only=True)
-    ws = wb[sheet_name]
+    # The trip sheet is the first tab — the rule the reader and the xlsx writer
+    # apply (types.SHEET_NAME says why). This used to take a name instead,
+    # defaulting to SHEET_NAME, and nothing ever passed one: so a workbook whose
+    # tab was called 'CAPITALS' imported, planned and exported as xlsx, and only
+    # its csv export died, on a KeyError (a 500). No parameter now, so there is
+    # no default left to go stale.
+    #
+    # No guard on the lookup, deliberately: these bytes are a workbook the
+    # reader already accepted, and it refuses one with no first worksheet at
+    # the door.
+    ws = wb[wb.sheetnames[0]]
     out = io.StringIO()
     writer = csv.writer(out, lineterminator="\n")
     for row in ws.iter_rows(values_only=True):

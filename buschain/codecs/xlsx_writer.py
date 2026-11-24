@@ -21,7 +21,7 @@ from xml.sax.saxutils import escape
 
 from .types import (
     ALL_COLUMNS, CellWrite, END_DATE, ExportPlan, INFO_SHEET, InfoCellWrite,
-    InfoWrite, NewRow, PAX, PROJECT, SHEET_NAMES, START_DATE,
+    InfoWrite, NewRow, PAX, PROJECT, START_DATE,
 )
 
 _CONTRACT_COLS = frozenset(ALL_COLUMNS)
@@ -59,10 +59,9 @@ def export(plan: ExportPlan) -> bytes:
             or plan.info_cell_writes or plan.deleted_rows):
         return plan.blob                      # AT1: byte-for-byte, trivially
 
-    # Whichever name this workbook's trip sheet actually carries — the same
-    # resolution the reader did, so the export patches the sheet the data came
-    # from rather than a sibling that happens to be named first in the list.
-    sheet_path = _trip_sheet_path(plan.blob)
+    # The trip sheet is the first tab — the reader's rule, asked here of the
+    # same bytes, so the export patches the sheet the data came from.
+    sheet_path = _sheet_path(plan.blob, None)
     # The Information sheet is only resolved when there is something to write
     # there, so a workbook without one still exports its trip data.
     info_path = (_sheet_path(plan.blob, INFO_SHEET)
@@ -88,28 +87,27 @@ def export(plan: ExportPlan) -> bytes:
 
 # -- workbook plumbing -------------------------------------------------------
 
-def _trip_sheet_path(blob: bytes) -> str:
-    """The worksheet part of whichever accepted trip-sheet name this workbook
-    uses. Names are tried in SHEET_NAMES order, matching the reader."""
-    for name in SHEET_NAMES:
-        try:
-            return _sheet_path(blob, name)
-        except XlsxPatchError:
-            continue
-    names = " or ".join(repr(n) for n in SHEET_NAMES)
-    raise XlsxPatchError(f"Workbook has no sheet named {names}")
+def _sheet_path(blob: bytes, sheet_name: str | None) -> str:
+    """Resolve a sheet -> worksheet part path via workbook.xml + rels.
 
-
-def _sheet_path(blob: bytes, sheet_name: str) -> str:
-    """Resolve sheet name -> worksheet part path via workbook.xml + rels."""
+    sheet_name None means the FIRST TAB, which is how the trip sheet is found;
+    the Information sheet is still asked for by name. workbook.xml lists its
+    <sheet> elements in tab order, so the first one in the document is tab 1 —
+    hidden and chart tabs counted, the same count xlsx_reader.read makes. The
+    two have to agree, or an edit would be spliced into a tab the trips were
+    never read from; test_xlsx_reader.py pins them to each other.
+    """
     with zipfile.ZipFile(io.BytesIO(blob)) as zf:
         workbook = zf.read("xl/workbook.xml").decode("utf-8")
         rels = zf.read("xl/_rels/workbook.xml.rels").decode("utf-8")
-    sheet = re.search(
-        rf'<sheet[^>]*name="{re.escape(escape(sheet_name))}"[^>]*/?>', workbook
-    )
+    # \b in the first-tab form so it cannot settle on the enclosing <sheets>.
+    pattern = (r"<sheet\b[^>]*/?>" if sheet_name is None else
+               rf'<sheet[^>]*name="{re.escape(escape(sheet_name))}"[^>]*/?>')
+    sheet = re.search(pattern, workbook)
     if sheet is None:
-        raise XlsxPatchError(f"Sheet {sheet_name!r} not found in workbook.xml")
+        raise XlsxPatchError(
+            "Workbook has no sheets in workbook.xml" if sheet_name is None
+            else f"Sheet {sheet_name!r} not found in workbook.xml")
     rid_match = re.search(r'r:id="(rId\d+)"', sheet.group(0))
     if rid_match is None:
         raise XlsxPatchError("Sheet element carries no relationship id")
