@@ -138,7 +138,7 @@ web  →  store  →  codecs  →  model
 | `buschain/model.py` | frozen dataclasses/enums; zero I/O |
 | `buschain/normalize.py` | the four allowed normalizations, nothing else |
 | `buschain/contract.py` | one home for validation: raw row → Trip \| NonOperableRow(reasons) |
-| `buschain/engine/` | pure `evaluate(report, registry, accepted, objective, reposition, locked, as_of) → EngineResult`; greedy ranking + multi-hop chain planning over a feasible-link graph, plus `solve.py`: the same graph handed to an exact solver (CBC, optional `.[solver]` extra) behind the on-demand **Optimize coverage…** action; `parked.py` enumerates the mid-chain idle windows the tail-only rule hides (listed, never planned) |
+| `buschain/engine/` | pure `evaluate(report, registry, accepted, objective, reposition, locked, as_of, horizon) → EngineResult`; greedy ranking + multi-hop chain planning over a feasible-link graph, plus `solve.py`: the same graph handed to an exact solver (CBC, optional `.[solver]` extra) behind the on-demand **Optimize coverage…** action; `parked.py` enumerates the mid-chain idle windows the tail-only rule hides (listed, never planned) |
 | `buschain/codecs/` | xlsx/csv importers + exporters behind neutral shapes (`ImportedDataset` in, `ExportPlan` out); swap/add codecs without touching anything else |
 | `buschain/store/` | SQLite; the only mutable state — every mutation re-runs the engine |
 | `buschain/web/` | thin FastAPI JSON API + one static page (6 tabs; the last, **Manual**, is `static/manual.html` — prose fetched on first open, rendering nothing from state) |

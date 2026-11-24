@@ -1,8 +1,9 @@
 """Feasible-link generation: the trips-and-links graph.
 
-The edge list produced here IS the optimization model: v1 ranks it greedily
-(suggest.py), and a future min-cost-flow/ILP solver consumes the identical
-edges plus a cost function — no model change required (brief rule 8).
+The edge list produced here IS the optimization model (brief rule 8):
+suggest.py and plan.py rank it greedily, and solve.py poses the same rules as
+an integer program, certifying its answer by replaying it through
+feasible_edges.
 """
 from __future__ import annotations
 
@@ -321,7 +322,7 @@ def feasible_edges(
     unit_assignments: Mapping[tuple[str, int], Sequence[Trip]],
     reposition: bool = False,
 ) -> list[Edge]:
-    """All (supply, demand) links satisfying rules 1-3 and 6.
+    """All (supply, demand) links satisfying rules 1-3, 6 and 10.
 
     unit_assignments: non-canceled assigned trips per numbered unit — the
     timeline the accepted link must remain consistent with.

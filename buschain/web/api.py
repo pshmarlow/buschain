@@ -59,8 +59,8 @@ def _sid(t: TripId | None) -> str | None:
 def _today() -> date:
     """Today's date — the one place the real clock is read.
 
-    A function rather than date.today() written out at its three callers
-    (_horizon, _rechain, _reclaim) so the API tests can pin it. They run
+    A function rather than date.today() written out at every caller, so the
+    API tests can pin it. They run
     against a reference workbook whose season is fixed, and with the real
     clock they aged out: once that season had passed, three reclaim tests
     failed and six more skipped on an untouched checkout, leaving the commit

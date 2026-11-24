@@ -32,17 +32,7 @@ from collections import defaultdict
 from typing import Iterable
 
 from ..model import Trip, TripId
-from .graph import MAX_GAP_DAYS, MIN_GAP_DAYS, numbered_unit_ok
-
-
-def _company_ok(company: str, demand: Trip) -> bool:
-    # Same rule as graph._constraint_ok, but keyed on a company rather than a
-    # supply trip: here the carrier is hypothetical, not yet assigned.
-    if demand.yn == "Y":
-        return company == demand.constraint_company
-    if demand.yn == "N":
-        return company != demand.constraint_company
-    return True
+from .graph import MAX_GAP_DAYS, MIN_GAP_DAYS, company_ok, numbered_unit_ok
 
 
 def reachable_demands(
@@ -80,7 +70,9 @@ def reachable_demands(
             gap = (d.start - trip.end).days
             if not MIN_GAP_DAYS <= gap <= MAX_GAP_DAYS:
                 continue
-            if company in served[d.id] or not _company_ok(company, d):
+            # Keyed on a company rather than a supply trip: the carrier here is
+            # hypothetical, not yet assigned — which is what company_ok takes.
+            if company in served[d.id] or not company_ok(company, d):
                 continue
             served[d.id].add(company)
             reached.add(d.id)

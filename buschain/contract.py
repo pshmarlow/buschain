@@ -157,8 +157,9 @@ def validate_row(row: RawTripRow, trip_id: TripId, registry: Registry) -> Trip |
     if arr is None:
         reasons.append(f"Arrival {s[ARRIVAL]!r} is not a registry city code")
 
-    # Pax is informational (no format constraint in the brief): parse when
-    # possible, never fail the row over it.
+    # Pax never fails the row: the brief gives it no format, and blank means
+    # unstated. Rule 10 reads the parsed number downstream
+    # (graph.numbered_unit_ok) — the contract only parses it.
     pax = _parse_int(v[PAX])
 
     er_marked = normalize.casefold_key(s[ER]) not in _NOT_ER and bool(s[ER])

@@ -10,7 +10,7 @@ why the model needed no change.
 Three properties keep it trustworthy:
 
 * Same rules, one home. Windows come from graph.min_gap_days, Y/N from
-  reach._company_ok, and repositioning is tail-only — nothing here restates a
+  graph.company_ok, and repositioning is tail-only — nothing here restates a
   rule, it only asks a better question over the same edges.
 * Every link is CERTIFIED by the engine before it reaches the caller: the
   solution is replayed hop by hop through graph.feasible_edges exactly as
@@ -51,7 +51,6 @@ from typing import Iterable, Mapping, Sequence  # noqa: F401 - Sequence in hints
 from ..model import Assignment, Plan, PlannedLink, Trip, TripId
 from . import graph
 from .plan import _assemble
-from .reach import _company_ok
 
 try:
     import pulp
@@ -156,7 +155,7 @@ def _solve(demand_trips, unit_assignments, reposition, time_limit, t0) -> Solved
         mine = []
         for j, d in enumerate(demand):
             gap = (d.start - tail.end).days
-            if gap < 1 or not _company_ok(company, d):
+            if gap < 1 or not graph.company_ok(company, d):
                 continue
             if _window_ok(tail.arr_city, d.dep_city, gap, reposition):
                 v = var(f"x_{i}_{j}", _edge_worth(tail.arr_city, d.dep_city, gap), d.id)
@@ -175,7 +174,7 @@ def _solve(demand_trips, unit_assignments, reposition, time_limit, t0) -> Solved
         for a_idx, (A, B) in enumerate(zip(trips, trips[1:])):
             slot = []
             for j, d in enumerate(demand):
-                if not _company_ok(company, d):
+                if not graph.company_ok(company, d):
                     continue
                 if (A.arr_city == d.dep_city and d.arr_city == B.dep_city
                         and graph.MIN_GAP_DAYS <= (d.start - A.end).days
@@ -201,11 +200,11 @@ def _solve(demand_trips, unit_assignments, reposition, time_limit, t0) -> Solved
     w_in: dict[tuple[str, TripId], list] = {}
     for c_idx, c in enumerate(companies):
         for j1, d1 in enumerate(demand):
-            if not _company_ok(c, d1):
+            if not graph.company_ok(c, d1):
                 continue
             for j2, d2 in enumerate(demand):
                 gap = (d2.start - d1.end).days
-                if gap < 1 or not _company_ok(c, d2):
+                if gap < 1 or not graph.company_ok(c, d2):
                     continue
                 if _window_ok(d1.arr_city, d2.dep_city, gap, reposition):
                     v = var(f"w_{c_idx}_{j1}_{j2}",

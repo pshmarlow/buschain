@@ -162,8 +162,8 @@ Two consequences worth knowing before changing the horizon:
 
 `feasible_edges` (`buschain/engine/graph.py`) emits an edge only when four
 gates all pass. This edge list *is* the optimization model (rule 8): the greedy
-v1 ranks it, and a future min-cost-flow/ILP solver would consume the identical
-edges plus a cost function.
+planner ranks it, and the exact solver (§5, `solve.py`) poses the same rules as
+an integer program and certifies its answer by replaying it through these edges.
 
 **Gate 1 — city and time window (rules 1–2).** The gap is
 `demand.start − supply.end` in days. The floor depends on where the bus is and
@@ -380,7 +380,7 @@ predecessor. Time ordering makes cycles impossible, so that is the whole
 model (`solve.py`, `_solve`).
 
 Three properties keep the result trustworthy: it restates no rules (windows
-from `min_gap_days`, Y/N from `reach._company_ok`, tail-only repositioning);
+from `min_gap_days`, Y/N from `graph.company_ok`, tail-only repositioning);
 every link is **certified** by replaying the solution hop-by-hop through
 `feasible_edges` before it reaches the caller (`_certify`, `solve.py`);
 and it is deterministic (canonical variable order + single-threaded CBC). The
@@ -612,7 +612,7 @@ All *listed, never auto-fixed*.
 |---|---|
 | 1 — D+1…D+4 window, max 3 rest days | `graph.py:16` constants, `min_gap_days`, applied in `feasible_edges` |
 | 2 — city match on canonical codes | `graph.py` (`_pair_chainable` / `feasible_edges` — `arr_city`/`dep_city` equality; codes canonicalized upstream in `model.Registry.resolve_city`; Y/N and the constraint company are parsed from Bus Preference by `contract.py`) |
-| 3 — Y/N constraints + ad hoc fallback | `graph.py` (`company_ok`, and `_constraint_ok` over it), `reach.py` (`_company_ok`), fallback in `suggest.build_suggestions` |
+| 3 — Y/N constraints + ad hoc fallback | `graph.py` (`company_ok`, and `_constraint_ok` over it; also applied by `reach.py` and `solve.py`), fallback in `suggest.build_suggestions` |
 | 4 — risk marks + broken-chain worklist | `deps.py` (`at_risk_chain`), `checks.py` (`broken_chains`) |
 | 5 — fleet over-commitment | `checks.py` (`fleet_warnings`; numbered-only, documented deviation) |
 | 6 — unit integrity | `checks.py` (`unit_integrity`), `graph.py` (`_unit_timeline_ok` for the planner, `insertion_ok` for the board's drag — same rules, opposite question); `parked.py` (`windows`) enumerates the mid-chain idle blocks the tail-only rule hides, with the fits `insertion_ok` allows |
