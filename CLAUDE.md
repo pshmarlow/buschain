@@ -26,11 +26,13 @@ extra, pinned `<4` — PuLP 4.0 removes the API in use; migration note in
 
 **Caution:** `buschain.db` in the repo root is live user data and the app's
 default DB. For any experiment or manual run, pass a scratch path to
-`create_app(db_path)` instead. The reference workbook
-`LDC_PLANNER__test.xlsx` is the fixture for the whole test suite — never edit
-it. `CAPITALS WINTER.xlsx` is a fixture too: the new-season workbook, whose
-trip tab has a different name, which `test_api.py` imports to pin that the csv
-export follows the trips to the first tab. The same goes for it.
+`create_app(db_path)` instead. The workbooks live in `excels/`
+(`tests/conftest.py` is the one place that says where). The reference workbook
+`excels/LDC_PLANNER__test.xlsx` is the fixture for the whole test suite — never
+edit it. `excels/CAPITALS WINTER.xlsx` is a fixture too: the new-season
+workbook, whose trip tab has a different name and which holds no trips at all
+— the tests use it to pin that the csv export follows the trips to the first
+tab. The same goes for it.
 
 ## What this is
 

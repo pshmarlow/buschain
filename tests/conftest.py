@@ -7,12 +7,31 @@ import pytest
 from buschain.codecs import seed, xlsx_reader
 from buschain.model import Registry
 
-WORKBOOK = Path(__file__).resolve().parent.parent / "LDC_PLANNER__test.xlsx"
+# Every workbook the suite reads lives in excels/, and this is the one place
+# that says so. They sat in the repo root until 2026-11-24, with the second
+# path spelled out inside the one test that used it — so moving the files
+# broke the suite in two places that did not know about each other.
+EXCELS = Path(__file__).resolve().parent.parent / "excels"
+WORKBOOK = EXCELS / "LDC_PLANNER__test.xlsx"
+WINTER_WORKBOOK = EXCELS / "CAPITALS WINTER.xlsx"
 
 
 @pytest.fixture(scope="session")
 def workbook_bytes() -> bytes:
     return WORKBOOK.read_bytes()
+
+
+@pytest.fixture(scope="session")
+def winter_bytes() -> bytes:
+    """The new-season workbook: the right header and nothing under it.
+
+    It differs from the reference workbook in the two ways a new season
+    always does. Its trip tab is renamed ('CAPITALS'), and it holds NO trips —
+    2,987 rows that are formatted but empty. That second fact is what makes it
+    a fixture in its own right: every "copy what the data rows do" rule in the
+    writer has no data row to copy from here.
+    """
+    return WINTER_WORKBOOK.read_bytes()
 
 
 @pytest.fixture(scope="session")

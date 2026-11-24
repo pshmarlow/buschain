@@ -9,8 +9,8 @@ buschain.db-wal
 *.db-shm
 *.db-wal
 
-# LDC_PLANNER__test.xlsx IS tracked — it is the golden fixture the whole suite
-# runs against. This one is a post-export copy of it (it already carries the
+# excels/LDC_PLANNER__test.xlsx IS tracked — it is the golden fixture the whole
+# suite runs against. This one is a post-export copy of it (it already carries the
 # Nationality/OP pick-list columns in Information!O and !P, which the fixture
 # predates), kept out so it cannot shadow the real file again.
 LDC_PLANNER__test-FINAL.xlsx

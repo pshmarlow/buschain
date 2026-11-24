@@ -120,9 +120,11 @@ from version history can reconstitute a torn database.
 .venv\Scripts\pytest          # Windows
 ```
 
-The reference workbook `LDC_PLANNER__test.xlsx` is the golden fixture:
-acceptance test 1 asserts that an export with no in-system changes is
-**byte-for-byte identical** to the imported file.
+The workbooks the suite reads live in `excels/`. The reference workbook
+`excels/LDC_PLANNER__test.xlsx` is the golden fixture: acceptance test 1
+asserts that an export with no in-system changes is **byte-for-byte
+identical** to the imported file. `excels/CAPITALS WINTER.xlsx` is the second
+one — a new season's workbook, header only, no trips.
 
 ## Architecture (strict one-way layering)
 
