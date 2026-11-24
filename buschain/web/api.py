@@ -56,6 +56,24 @@ def _sid(t: TripId | None) -> str | None:
     return None if t is None else _rid(t)
 
 
+def _today() -> date:
+    """Today's date — the one place the real clock is read.
+
+    A function rather than date.today() written out at its three callers
+    (_horizon, _rechain, _reclaim) so the API tests can pin it. They run
+    against a reference workbook whose season is fixed, and with the real
+    clock they aged out: once that season had passed, three reclaim tests
+    failed and six more skipped on an untouched checkout, leaving the commit
+    paths for re-chain, reclaim and the horizon untested from then on. The
+    engine avoids this by taking `as_of`/`horizon` as arguments; this is the
+    same idea one layer up, for the layer whose job is to supply them.
+
+    Not a setting and not a parameter of any route: a client-supplied "today"
+    would let a stale browser plan against yesterday (see Settings.horizon).
+    """
+    return date.today()
+
+
 def _horizon(settings: dict[str, Any]) -> date | None:
     """The planner's far bound as an absolute date — None for "all".
 
@@ -70,7 +88,7 @@ def _horizon(settings: dict[str, Any]) -> date | None:
     horizon = settings["horizon"]
     if horizon == "all":
         return None
-    return date.today() + timedelta(days=int(horizon))
+    return _today() + timedelta(days=int(horizon))
 
 
 def _trip_json(t: Trip) -> dict[str, Any]:
@@ -763,7 +781,7 @@ def _rechain(repo: Repo, settings: dict[str, Any]) -> RechainResult:
         report, registry, accepted,
         system_assigned=repo.system_assigned_ids(),
         locked=repo.locked_ids(),
-        as_of=date.today(),
+        as_of=_today(),
         horizon=_horizon(settings),
         objective=settings["objective"],
         reposition=settings["reposition"],
@@ -838,7 +856,7 @@ def _reclaim(repo: Repo, settings: dict[str, Any]) -> AdhocReclaimResult:
     result = adhoc.build(
         report, registry, accepted,
         locked=repo.locked_ids(),
-        as_of=date.today(),
+        as_of=_today(),
         horizon=_horizon(settings),
         objective=settings["objective"],
         reposition=settings["reposition"],

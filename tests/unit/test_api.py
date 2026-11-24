@@ -2,16 +2,33 @@
 cancel -> worklist -> export."""
 import io
 import zipfile
+from datetime import date, timedelta
 
 import pytest
 from fastapi.testclient import TestClient
 
 from buschain.engine import graph
+from buschain.web import api
 from buschain.web.app import create_app
+
+# What every test in this file takes "today" to be. The reference workbook's
+# season is fixed — its trips run late August to October 2026 — so against the
+# real clock these tests were a measurement of where the calendar happened to
+# stand: once the season had passed, three reclaim tests failed outright and
+# six more skipped, on a checkout nobody had touched. The web layer reads the
+# clock through api._today so that it can be pinned here, which is the same
+# move that keeps the engine's own tests stable (they pass `as_of`).
+#
+# 2026-08-01 because it is the `as_of` the measurements in docs/engine.md §9
+# were taken on: the whole season still lies ahead, most of it more than a
+# month out and some of it inside one, so both sides of every date rule
+# (21-day notice, 30-day horizon) have trips to bite on.
+TODAY = date(2026, 8, 1)
 
 
 @pytest.fixture
-def client(tmp_path, workbook_bytes):
+def client(tmp_path, workbook_bytes, monkeypatch):
+    monkeypatch.setattr(api, "_today", lambda: TODAY)
     app = create_app(tmp_path / "api.db")
     with TestClient(app) as c:
         res = c.post("/api/import", files={
@@ -27,8 +44,7 @@ def client(tmp_path, workbook_bytes):
         # season — the reference workbook ends Oct 2026, so they would go from
         # asserting 113 covered trips to asserting 0, and then keep changing
         # answer as real time passes. The horizon has its own tests below,
-        # which say so and skip once the data has aged out; this is the same
-        # convention already used for the rule-11 notice tests.
+        # which narrow it again against the pinned TODAY above.
         assert c.post("/api/settings", json={"horizon": "all"}).status_code == 200
         yield c
 
@@ -878,11 +894,13 @@ def test_pick_list_edits_reach_the_information_sheet(client):
 
 
 # -- the planning horizon ----------------------------------------------------
-# Everything from here down runs against the real clock, because both ends of
-# the planning window are measured from today's date and the web layer is where
-# that enters the system. The reference workbook's trips end in Oct 2026, so
-# each test that needs a future trip says so and skips rather than silently
-# asserting nothing once the data is entirely in the past.
+# Everything from here down is measured from today's date, which enters the
+# system in the web layer — and which the `client` fixture pins to TODAY. These
+# tests used to run against the real clock and skip once the reference season
+# had passed, which kept the suite green by going dark: from that day on none
+# of them ran again. So what were skips are now assertions. With the date
+# pinned and the workbook fixed, "no future trip" can only mean something
+# broke, and that has to fail loudly rather than be skipped past.
 
 def _uncovered_after(client, iso):
     """Live uncovered trips starting after a date, straight off /state."""
@@ -896,18 +914,15 @@ def test_horizon_bounds_everything_the_planner_derives(client):
     candidates and reachability too, not only the chains. A trip the board
     offers while the planner refuses to consider it is the same setting
     disagreeing with itself."""
-    from datetime import date, timedelta
     # The fixture pins "all", so this is the unbounded engine.
     wide = client.get("/api/state").json()
     assert wide["horizon_through"] is None
     assert wide["engine"]["beyond_horizon"] == 0
-    if not wide["engine"]["plan"]["covered"]:
-        pytest.skip("reference workbook is entirely in the past")
+    assert wide["engine"]["plan"]["covered"], "the unbounded plan covers trips"
 
-    cutoff = (date.today() + timedelta(days=30)).isoformat()
+    cutoff = (TODAY + timedelta(days=30)).isoformat()
     outside = {t["id"] for t in _uncovered_after(client, cutoff)}
-    if not outside:
-        pytest.skip("no uncovered trip more than a month out")
+    assert outside, "the reference season runs more than a month past TODAY"
 
     assert client.post("/api/settings", json={"horizon": "30"}).status_code == 200
     narrow = client.get("/api/state").json()
@@ -937,9 +952,11 @@ def test_horizon_round_trips_and_rejects_unknown_values(client):
     assert client.get("/api/state").json()["settings"]["horizon"] == "90"
 
 
-def test_a_fresh_database_plans_a_month_ahead(tmp_path, workbook_bytes):
-    """The shipped default, asserted where no fixture has overridden it."""
-    from datetime import date, timedelta
+def test_a_fresh_database_plans_a_month_ahead(tmp_path, workbook_bytes, monkeypatch):
+    """The shipped default, asserted where no fixture has overridden it — the
+    setting, that is. The date is pinned here as everywhere else in this file,
+    so the cutoff is a fixed day and not one that can tick over mid-test."""
+    monkeypatch.setattr(api, "_today", lambda: TODAY)
     app = create_app(tmp_path / "default.db")
     with TestClient(app) as c:
         c.post("/api/import", files={
@@ -947,7 +964,7 @@ def test_a_fresh_database_plans_a_month_ahead(tmp_path, workbook_bytes):
         state = c.get("/api/state").json()
         assert state["settings"]["horizon"] == "30"
         assert state["horizon_through"] == (
-            date.today() + timedelta(days=30)).isoformat()
+            TODAY + timedelta(days=30)).isoformat()
 
 
 def test_rechain_never_releases_a_trip_the_horizon_hides(client):
@@ -955,10 +972,9 @@ def test_rechain_never_releases_a_trip_the_horizon_hides(client):
     past the cutoff is invisible to the replan, so releasing it would strand it
     every time. Asserted through the API because that is where the horizon is
     resolved from today."""
-    from datetime import date, timedelta
-    cutoff = (date.today() + timedelta(days=30)).isoformat()
-    if not _uncovered_after(client, cutoff):
-        pytest.skip("no trip more than a month out")
+    cutoff = (TODAY + timedelta(days=30)).isoformat()
+    assert _uncovered_after(client, cutoff), \
+        "the reference season runs more than a month past TODAY"
 
     assert client.post("/api/settings", json={"horizon": "30"}).status_code == 200
     preview = client.get("/api/rechain").json()
@@ -976,8 +992,7 @@ def test_reclaim_separates_the_notice_deadline_from_the_horizon(client):
     the two counters are what let the panel say which rule did it."""
     wide = client.get("/api/reclaim-adhoc").json()
     assert wide["horizon"] is None and wide["frozen_horizon"] == 0
-    if not wide["eligible"]:
-        pytest.skip("no cancellable hire in the reference data today")
+    assert wide["eligible"], "the reference data has cancellable hires at TODAY"
 
     assert client.post("/api/settings", json={"horizon": "14"}).status_code == 200
     narrow = client.get("/api/reclaim-adhoc").json()
@@ -994,9 +1009,8 @@ def test_reclaim_separates_the_notice_deadline_from_the_horizon(client):
 
 def _future_suggestion(client):
     """An engine-proposed link whose demand has not started yet, or None."""
-    from datetime import date
     state = client.get("/api/state").json()
-    today = date.today().isoformat()
+    today = TODAY.isoformat()
     for trip in state["trips"]:
         if trip["start"] <= today:
             continue
@@ -1037,8 +1051,7 @@ def test_lock_is_undoable(client):
 
 def test_rechain_releases_an_app_made_future_assignment(client):
     s = _future_suggestion(client)
-    if s is None:
-        pytest.skip("no engine-proposed link on a future trip in this dataset")
+    assert s is not None, "the engine proposes a link on a trip after TODAY"
     assert client.post("/api/accept", json={
         "demand": s["demand"], "company": s["company"], "unit": s["unit"],
         "supply": s["supply"]}).status_code == 200
@@ -1052,8 +1065,7 @@ def test_rechain_releases_an_app_made_future_assignment(client):
 
 def test_rechain_will_not_release_a_locked_assignment(client):
     s = _future_suggestion(client)
-    if s is None:
-        pytest.skip("no engine-proposed link on a future trip in this dataset")
+    assert s is not None, "the engine proposes a link on a trip after TODAY"
     client.post("/api/accept", json={
         "demand": s["demand"], "company": s["company"], "unit": s["unit"],
         "supply": s["supply"]})
@@ -1069,8 +1081,7 @@ def test_rechain_apply_is_one_undo_step(client):
     """Applied as a unit and reversed as a unit — a half-applied rearrangement
     would leave assignments taken back with nothing put in their place."""
     s = _future_suggestion(client)
-    if s is None:
-        pytest.skip("no engine-proposed link on a future trip in this dataset")
+    assert s is not None, "the engine proposes a link on a trip after TODAY"
     client.post("/api/accept", json={
         "demand": s["demand"], "company": s["company"], "unit": s["unit"],
         "supply": s["supply"]})
