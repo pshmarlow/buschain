@@ -421,7 +421,7 @@ td.cell input, td.cell select { width: 100%; min-width: 6rem; padding: 0.1rem 0.
 .bar.uncovered.later { border-style: dashed; font-weight: normal; }
 .bar.uncovered.never { border-style: dotted; font-weight: normal; opacity: 0.62; }
 /* Planned = the engine's proposal, not an assignment. Diagonal hatching is the
-   whole point: on a unit row (auto mode) a planned bar sits beside committed
+   whole point: on a unit row (Show plan on buses) a planned bar sits beside committed
    ones, and only the fill tells them apart. Solid fills read as real, so this
    one must never be solid. The stripes are cut from the status colour
    (--bar-stripe), so the bar still says Confirmed or Pending while its texture

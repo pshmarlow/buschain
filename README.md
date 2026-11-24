@@ -75,13 +75,15 @@ registry is maintained in-app afterwards — check the seed warnings for
 companies it refused to guess at, e.g. the 'Nordi Bus' alias).
 
 The **Suggestions** tab shows the plan: multi-hop chains the fleet could run,
-grouped by bus. Two modes — *manual* offers accept buttons (whole chain, single
-link, or the entire plan); *auto* keeps the plan live on the board without
-them. Two objectives — *most trips covered* or *fewest idle days*; switching
-replans. **Empty runs** can be switched off, which restricts every proposal —
-chains, one-hop candidates, board ghost slots alike — to trips departing from
-the city the bus last arrived in; on the reference dataset that is 113 links
-down to 60. Either way nothing is written until you accept, and provisional
+grouped by bus, each with accept buttons (whole chain, single link, or the
+entire plan). Three settings decide what is planned, and switching any of them
+replans. Two objectives — *most trips covered* or *fewest idle days*. **Empty
+runs** can be switched off, which restricts every proposal — chains, one-hop
+candidates, board ghost slots alike — to trips departing from the city the bus
+last arrived in; on the reference dataset that is 113 links down to 60. **Plan
+ahead** (2 weeks / 1 month / 3 months / All, default a month) bounds how far
+out anything is proposed, and prints the date it resolves to. Whatever the
+settings, nothing is written until you accept, and provisional
 links never appear in an export. **Optimize coverage…** runs the exact solver
 over the same rules (a few seconds) and previews the best achievable plan next
 to the greedy one — on the reference data 124 covered vs 113, at the cost of
@@ -90,7 +92,10 @@ more empty runs, which the preview states before you apply.
 On the **Timelines** board, selecting a bar opens its panel; **Show in Data**
 (shortcut: `d`) jumps to that trip's row in the Data tab, clearing the Data
 filters first if they were hiding it. Bars can be dragged — sideways to move a
-trip's dates, up or down to move it to another bus or take one off — and below
+trip's dates, up or down to move it to another bus or take one off. **Show
+plan on buses** draws each planned trip, still hatched, on the bus that would
+run it instead of in the Uncovered row; it changes the picture, not the plan
+(it was once a Manual / Auto "mode" on Suggestions). Below
 the board three panels report fleet over-commitment, unit-integrity findings,
 and **Parked buses**: units idle mid-chain longer than any chain window, with
 the uncovered trips a drop could put there and the empty-run days each would

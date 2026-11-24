@@ -72,9 +72,10 @@
 <dl class="manual-dl">
   <dt>Nothing is ever assigned automatically.</dt>
   <dd>
-    The app plans, ranks and explains. A human accepts. Even in <em>Auto</em>
-    mode — which only changes where the plan is <em>drawn</em> — nothing reaches
-    your spreadsheet until you press an Accept button.
+    The app plans, ranks and explains. A human accepts. Even with <em>Show plan
+    on buses</em> ticked on the Timelines board — which only changes where the
+    plan is <em>drawn</em> — nothing reaches your spreadsheet until you press an
+    Accept button.
   </dd>
 
   <dt>Your file is never rewritten, only patched.</dt>
@@ -173,6 +174,11 @@
   <em>“113 of 190 uncovered trips can be chained onto 24 units…”</em> — and a
   card per bus underneath. Nothing has been written; these are proposals.
 </p>
+<p>
+  If it says instead that there is nothing to plan inside the plan-ahead
+  window, the season starts further out than the planner is looking:
+  <em>Plan ahead</em> defaults to one month. Widen it (chapter 6.4).
+</p>
 
 <h3>2.6 Accept, then export</h3>
 <p>
@@ -245,7 +251,7 @@
   The app will propose one, but only as a last resort: every free link is placed
   before any link costing an empty run, and empty runs are always counted
   separately in every summary so you can weigh them. You can switch them off
-  entirely (chapter 6.4).
+  entirely (chapter 6.3).
 </p>
 
 <h3>3.5 Provisional versus committed</h3>
@@ -660,20 +666,7 @@
   absorb; the difference needs <em>capacity</em>, not planning.
 </p>
 
-<h3>6.2 Mode: Manual or Auto</h3>
-<p>
-  This changes <strong>where the plan is drawn</strong>, nothing else.
-</p>
-<ul>
-  <li><strong>Manual</strong> — planned trips stay in the “Uncovered” row of the
-      board.</li>
-  <li><strong>Auto</strong> — planned trips are drawn on the bus that would run
-      them, so the board reads as a proposed schedule. They keep their
-      provisional styling, and they are still not written anywhere.</li>
-</ul>
-<p>Both modes have exactly the same accept buttons. Auto mode does not assign anything.</p>
-
-<h3>6.3 Objective: most trips covered, or fewest idle days</h3>
+<h3>6.2 Objective: most trips covered, or fewest idle days</h3>
 <p>
   Switching replans immediately.
 </p>
@@ -687,7 +680,7 @@
       rather than avoid waiting.</li>
 </ul>
 
-<h3>6.4 Empty runs: Allowed or Same city only</h3>
+<h3>6.3 Empty runs: Allowed or Same city only</h3>
 <p>
   This single switch governs the whole engine — chains, one-hop candidates,
   board ghost slots and even the wording of the explanations.
@@ -698,6 +691,45 @@
   dataset it takes the plan from 113 links to 60, and most of the fleet ends up
   parked where nothing departs. If the plan comes back empty, the app says so
   explicitly rather than letting the setting look like a broken engine.
+</p>
+
+<h3>6.4 Plan ahead: how far out the planner decides</h3>
+<p>
+  <em>2 weeks</em>, <em>1 month</em> (the default), <em>3 months</em> or
+  <em>All</em>. The planner only proposes a bus for a trip that starts after
+  today and no later than the date printed beside the buttons
+  (<em>“through …”</em>). Switching replans immediately.
+</p>
+<p>
+  The limit is there because a planner with none ties buses to work months
+  away, on a schedule that is still being edited.
+</p>
+<table class="manual-table">
+  <tr><th>Stays inside the window</th><th>Ignores it</th></tr>
+  <tr>
+    <td>The chain cards, the single-hop candidates, the candidate slots and
+        <em>Parked buses</em> fits on the board, <em>Optimize coverage…</em>,
+        <em>Re-chain future…</em> and <em>Reclaim from ad hoc…</em>.</td>
+    <td>Anything you do by hand: dragging a bar on the board (chapter 7.6) and
+        <em>Assign by hand</em> (7.7).</td>
+  </tr>
+</table>
+<p>
+  It limits which trips get a proposal, not which buses are available. A bus
+  whose last trip ended before the window opens is standing there ready, and
+  still counts.
+</p>
+<p>
+  Trips outside the window are not hidden. They are on the Data tab as always,
+  the summary line counts them (<em>“n more uncovered trips outside the
+  plan-ahead window”</em>), and with <em>All uncovered</em> ticked the board's
+  Uncovered row draws them and counts them too. If the plan looks empty, read
+  that count before concluding the fleet has no room.
+</p>
+<p class="manual-note">
+  A hired bus needs 21 days' notice to send away (6.7). At <em>2 weeks</em> no
+  trip is both far enough out to cancel and near enough to plan, so
+  <em>Reclaim from ad hoc…</em> finds nothing, and its panel says so.
 </p>
 
 <h3>6.5 Accepting</h3>
@@ -720,9 +752,9 @@
 <p>
   Everything else in the app is additive. <strong>Re-chain</strong> releases
   assignments the app made and rebuilds them from scratch under the current
-  mode, objective and empty-run setting.
+  objective, empty-run and plan-ahead settings.
 </p>
-<p>Four boundaries decide what may be released, and none is negotiable:</p>
+<p>Five boundaries decide what may be released, and none is negotiable:</p>
 <ol>
   <li>Only assignments <strong>this app wrote</strong> into a cell that was blank
       on import. A company name that came from the spreadsheet is source data —
@@ -732,6 +764,9 @@
   <li>Only <strong>numbered</strong> buses. Sending a hired-in (ad hoc) bus away
       is a cancellation, not a rearrangement — that is <em>Reclaim from ad
       hoc…</em> below.</li>
+  <li>Only trips <strong>inside the plan-ahead window</strong> (6.4). The replan
+      cannot see past it, so a trip released beyond the cutoff could never get
+      its bus back. Widen the window first if you want those re-decided.</li>
 </ol>
 <p>
   The panel states how many assignments each rule froze, so a small releasable
@@ -849,6 +884,14 @@
       assignments that name no specific bus. Toggle with the <em>Ad hoc</em>
       checkbox.</li>
 </ol>
+<p>
+  <em>Show plan on buses</em> decides where the plan's proposals are drawn.
+  Unticked, a planned trip stays in the Uncovered row. Ticked, it sits on the
+  row of the bus that would run it, so the board reads as a proposed schedule.
+  Either way the bar is hatched, nothing has been written, and the accept
+  controls are the same: the box changes the picture, not the plan. Unlike the
+  other three boxes, it is remembered the next time you open the app.
+</p>
 <p>
   Bars that would overlap on the same bus are <em>stacked</em> rather than
   drawn side by side — that stacking is how a double-booking becomes visible
@@ -1292,7 +1335,7 @@
 <ol class="manual-steps">
   <li>Import the latest planner; check the operable / non-operable counts.</li>
   <li>Fix non-operable rows (11.2) — every one you fix is a trip that can be planned.</li>
-  <li>On <em>Suggestions</em>, check the objective and the empty-run setting are what you want.</li>
+  <li>On <em>Suggestions</em>, check the objective, the empty-run setting and <em>Plan ahead</em> are what you want.</li>
   <li>Work down the chain cards. Accept the ones you agree with; for a trip you
       want on a different bus, use the “n other buses could take it” link.</li>
   <li>Switch to <em>Timelines</em> and look at the leftovers: the Uncovered row
@@ -1340,7 +1383,9 @@
 
 <h3>11.6 Replan the whole future</h3>
 <ol class="manual-steps">
-  <li>Set the objective and the empty-run switch to what you want the future to look like.</li>
+  <li>Set the objective, the empty-run switch and <em>Plan ahead</em> to what you
+      want the future to look like. A re-chain never reaches past the
+      plan-ahead window.</li>
   <li><em>Re-chain future…</em> → read the preview: net change first, stranded trips, and what was frozen.</li>
   <li>Apply, or Discard. Applying is one undo step.</li>
 </ol>
@@ -1412,9 +1457,10 @@
       assignments the app itself wrote.</dd>
 
   <dt>Re-chain says it will only release a fraction of the future trips.</dt>
-  <dd>That is the four release boundaries doing their job — source-file
-      assignments, trips already started, locked trips, and ad hoc bookings
-      (those are <em>Reclaim</em>'s business, chapter 6.7) are all frozen. The
+  <dd>That is the five release boundaries doing their job — source-file
+      assignments, trips already started, locked trips, ad hoc bookings
+      (those are <em>Reclaim</em>'s business, chapter 6.7) and anything
+      starting after the plan-ahead window (chapter 6.4) are all frozen. The
       panel breaks the number down.</dd>
 
   <dt>I applied a re-chain and coverage went <em>down</em>.</dt>

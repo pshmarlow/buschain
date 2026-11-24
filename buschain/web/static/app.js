@@ -1397,8 +1397,6 @@ function otherUnitsFor(demandId, company, unit) {
    export until someone confirms them. Everything below renders that fact; the
    one thing it must never do is let a planned trip read as a committed one. */
 
-const planMode = () => (S.settings ? S.settings.mode : "manual");
-
 /* demand trip id -> the chain link that proposes it. perState-cached: the
    board asks per bar (thousands of lookups) and three different renderers ask
    per pass — the comment used to say "built once per render" while the call
@@ -1440,10 +1438,11 @@ function chainRow(chain, links) {
         onclick: () => { showTab("timelines"); selectOnBoard(link.demand); } },
         `${others.length} other bus${others.length === 1 ? "" : "es"} could take it`));
     }
-    /* Unconditional. These used to render only in manual mode, which left auto
-       mode with no way to commit anything while its own summary promised
-       "nothing is written until you confirm a chain" — a confirmation with no
-       control. The mode governs how the plan is DRAWN (see boardRows), not
+    /* Unconditional. These used to render only in what was then "manual mode",
+       which left "auto mode" with no way to commit anything while its own
+       summary promised "nothing is written until you confirm a chain" — a
+       confirmation with no control. That setting is now the board's "Show plan
+       on buses" box: it governs how the plan is DRAWN (see boardRows), not
        whether it can be accepted. */
     parts.push(i === 0
       ? el("button", { class: "btn small",
@@ -1637,13 +1636,12 @@ function renderPlanSummary() {
     + `${plural(free, "free day")}`
     + (driving ? ` (${driving} of them driving an empty run, the rest idle)` : "")
     + ". ",
-    // The mode decides where the plan is DRAWN, not whether it can be
-    // committed, so both readings end at the same accept controls.
-    planMode() === "auto"
-      ? "Auto mode: the plan is recomputed on every change and drawn on the bus "
-        + "that would run it. It stays provisional — nothing is written and "
-        + "nothing is exported until you accept a chain, a link, or the plan."
-      : "Accept a whole chain, a single link, or the entire plan."));
+    // One sentence whatever the board's "Show plan on buses" box says: that
+    // box decides where the plan is DRAWN, and this tab reads the same either
+    // way. It keeps the promise the old auto-mode wording made — provisional
+    // until accepted — because that was never true of one mode only.
+    "Nothing is written until you accept a chain, a single link, or the "
+    + "entire plan."));
 
   box.append(el("button", { class: "btn small primary",
     onclick: acceptWholePlan }, `Accept entire plan (${n})`));
@@ -1668,8 +1666,10 @@ function renderPlanSummary() {
    the returned plan was actually built with. */
 function renderPlanToggles() {
   const s = S.settings || { mode: "manual", objective: "coverage", reposition: true };
-  document.querySelectorAll("#mode-group button").forEach((b) =>
-    b.classList.toggle("active", b.dataset.mode === s.mode));
+  /* Sits on the Timelines toolbar, since it only changes how the board is
+     drawn, but is set here with the rest: it is server state like them, and a
+     tick whose save did not land must not be left standing. */
+  $("#plan-on-units").checked = s.mode === "auto";
   document.querySelectorAll("#objective-group button").forEach((b) =>
     b.classList.toggle("active", b.dataset.objective === s.objective));
   /* data-* is always a string, so compare against the rendered bool rather
@@ -2166,10 +2166,11 @@ function boardRows() {
      silently, and one checkbox brings it back. */
   const uncovered = uncoveredTrips();
   const planned = plannedLinks();
-  /* Auto mode's whole point is seeing the plan as a running schedule, so its
+  /* "Show plan on buses" is for seeing the plan as a running schedule, so its
      trips sit on the bus that would run them. They keep the provisional style
-     (tripBar) — moving a bar must not be what tells someone it is committed. */
-  const onUnitRows = planMode() === "auto";
+     (tripBar) — moving a bar must not be what tells someone it is committed.
+     Stored as mode "auto": see the #plan-on-units listener. */
+  const onUnitRows = !!S.settings && S.settings.mode === "auto";
   const loose = onUnitRows ? uncovered.filter((t) => !planned.has(t.id)) : uncovered;
 
   const actionable = loose.filter((t) => S.engine.suggestions_by_trip[t.id]);
@@ -2818,7 +2819,7 @@ function boardRow(r, ctx) {
      answer is that there is no question — nothing starts after that tail.
 
      Anchored on the last live bar rather than the tail so it cannot land under
-     a planned bar in auto mode; the panel it opens is still the tail's, which
+     a planned bar drawn on its bus; the panel it opens is still the tail's, which
      is the only place a chain extends from. */
   const live = r.trips.filter((t) => t.status !== "Canceled");
   const tailId = r.kind === "unit" ? unitTailId(r.key) : null;
@@ -4052,8 +4053,9 @@ $("#board").addEventListener("pointerdown", (e) => {
   const trip = bar && tripById(bar.dataset.trip);
   if (!trip) return;
   /* Where the trip actually IS, from its assignment — not from the row the bar
-     was drawn in. In auto mode a provisional bar sits on the unit that would
-     run it while still being uncovered, and reading the row would call
+     was drawn in. With "Show plan on buses" ticked a provisional bar sits on
+     the unit that would run it while still being uncovered, and reading the
+     row would call
      dropping it there "already on this row" when it is in fact the accept. */
   const a = trip.assignment;
   const fromKey = !a ? "uncovered"
@@ -4255,8 +4257,15 @@ $("#show-adhoc").addEventListener("change", (e) => {
   renderBoard();
 });
 
-$("#mode-group").addEventListener("click", (e) => {
-  if (e.target.dataset.mode) setPlanSetting({ mode: e.target.dataset.mode });
+/* "Show plan on buses". Stored as mode "auto" (ticked) / "manual" (not) — the
+   names it had as a Suggestions control; renaming them would mean migrating a
+   saved row for a word nobody sees. The re-render afterwards is for the save
+   that did not happen: mutate returns without refreshing on an error or while
+   another mutation is in flight, and a checkbox, unlike the buttons this
+   replaced, flips the moment it is clicked. */
+$("#plan-on-units").addEventListener("change", async (e) => {
+  await setPlanSetting({ mode: e.target.checked ? "auto" : "manual" });
+  if (S) renderPlanToggles();
 });
 
 $("#objective-group").addEventListener("click", (e) => {

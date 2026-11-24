@@ -138,17 +138,13 @@
 
   <section id="tab-suggestions" class="tab">
     <div class="toolbar">
-      <span class="seg-group" id="mode-group">Mode
-        <button class="btn small" data-mode="manual">Manual</button>
-        <button class="btn small" data-mode="auto">Auto</button>
-      </span>
       <span class="seg-group" id="objective-group">Optimize for
         <button class="btn small" data-objective="coverage">Most trips covered</button>
         <button class="btn small" data-objective="idle">Fewest idle days</button>
       </span>
       <!-- Not scoped to this tab: it also changes what the Timelines board
-           offers. It sits here because it is the third thing that decides what
-           the engine computes, alongside mode and objective. -->
+           offers. It sits here because it decides what the engine computes,
+           alongside the objective and the plan-ahead window. -->
       <span class="seg-group" id="reposition-group">Empty runs
         <button class="btn small" data-reposition="1">Allowed</button>
         <button class="btn small" data-reposition="0">Same city only</button>
@@ -166,7 +162,7 @@
         <button class="btn small" data-horizon="all">All</button>
         <small id="horizon-through"></small>
       </span>
-      <!-- The only control that takes assignments BACK. It reads the four
+      <!-- The only control that takes assignments BACK. It reads the three
            settings to its left, so it sits after them. -->
       <button class="btn small" id="rechain-btn"
               title="Rebuild every releasable future chain from scratch under the
@@ -213,6 +209,14 @@ anything, and never cancels a hire it cannot replace.">Reclaim from ad hoc…</b
       <label><input type="checkbox" id="all-uncovered"> All uncovered</label>
       <label><input type="checkbox" id="show-canceled"> Show canceled</label>
       <label><input type="checkbox" id="show-adhoc" checked> Ad hoc</label>
+      <!-- Where the plan is DRAWN, nothing more: unticked, planned trips stay
+           in the Uncovered row; ticked, each sits (still hatched) on the bus
+           that would run it. It used to be "Mode: Manual / Auto" beside the
+           engine settings on Suggestions, where it read as something that
+           changes the plan. Saved on the server, unlike the three boxes before
+           it, so the choice survives a reload. -->
+      <label title="Draw each planned trip on the bus that would run it, instead of in the
+Uncovered row. Display only: the bars stay hatched and nothing is assigned until you accept."><input type="checkbox" id="plan-on-units"> Show plan on buses</label>
       <button class="btn small undo-btn" disabled>↶ Nothing to undo</button>
       <span id="board-legend">
         <span class="legend-head">Colour = status:</span>
