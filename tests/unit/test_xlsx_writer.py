@@ -109,6 +109,82 @@ def test_appended_row_does_not_inherit_the_blank_rows_general_format():
     assert b's="99"' not in out
 
 
+# A new season's sheet in miniature: a styled header, then formatted rows with
+# nothing in them. The header's cells are s="7" (general format); the blank
+# rows' own are s="3" for text and s="4" for a date.
+EMPTY_SEASON = (
+    b'<?xml version="1.0"?><worksheet>'
+    b'<dimension ref="A1:E3"/><sheetData>'
+    b'<row r="1"><c r="A1" s="7" t="inlineStr"><is><t>Status</t></is></c>'
+    b'<c r="E1" s="7" t="inlineStr"><is><t>Start date</t></is></c></row>'
+    b'<row r="2"><c r="A2" s="3"/><c r="E2" s="4"/></row>'
+    b'<row r="3"><c r="A3" s="3"/><c r="E3" s="4"/></row>'
+    b'</sheetData></worksheet>'
+)
+FIRST_TRIP = NewRow({STATUS: "Pending", START_DATE: "2026-12-10"})
+
+
+def test_first_trip_in_an_empty_sheet_is_not_styled_like_the_header():
+    """"Copy the last row that holds values" has one case where that row is not
+    a trip: a sheet with no trips, where it is the header.
+
+    Copying it put the header's general format on the first trip's dates, so
+    they went out as the bare serial 46366 — and came back, through this app's
+    own import, as "not a valid date". The header still decides WHERE the row
+    goes (directly under it); it no longer decides how the row looks.
+    """
+    out = _patch_sheet(EMPTY_SEASON, (), (FIRST_TRIP,))
+    assert b'<c r="A2" s="3" t="inlineStr"><is><t>Pending</t></is></c>' in out
+    assert b'<c r="E2" s="4"><v>46366</v></c>' in out     # a date, in the row's date style
+    assert out.count(b's="7"') == 2                       # the header kept its own
+
+
+def test_first_trip_under_a_bare_header_writes_its_date_as_text():
+    """No data row to copy and no formatted row to land in: nothing in the
+    sheet says what a date looks like. The ISO string is the honest fallback —
+    it reads back as the date it is — where a serial in an unstyled cell
+    would be a number that only looks like one."""
+    bare = EMPTY_SEASON.replace(
+        b'<row r="2"><c r="A2" s="3"/><c r="E2" s="4"/></row>'
+        b'<row r="3"><c r="A3" s="3"/><c r="E3" s="4"/></row>', b"")
+    out = _patch_sheet(bare, (), (FIRST_TRIP,))
+    assert (b'<row r="2"><c r="A2" t="inlineStr"><is><t>Pending</t></is></c>'
+            b'<c r="E2" t="inlineStr"><is><t>2026-12-10</t></is></c></row>') in out
+    assert b"46366" not in out
+
+
+def test_append_still_refuses_a_sheet_with_no_values_at_all():
+    """Ignoring the header for STYLE must not make it stop counting for
+    PLACEMENT, in either direction: a header-only sheet is appendable (the
+    two tests above), a sheet with not even a header is not — there is no
+    layout to put a trip under."""
+    empty = (b'<?xml version="1.0"?><worksheet><dimension ref="A1:A2"/>'
+             b'<sheetData><row r="1"><c r="A1" s="7"/></row><row r="2"/>'
+             b'</sheetData></worksheet>')
+    with pytest.raises(xlsx_writer.XlsxPatchError, match="no populated rows"):
+        _patch_sheet(empty, (), (FIRST_TRIP,))
+
+
+def test_first_trip_in_the_winter_workbook_reads_back_as_a_date(winter_bytes):
+    """The real file EMPTY_SEASON stands for: header, then 2,987 formatted but
+    empty rows whose date cells already carry d-mmm-yy."""
+    from datetime import datetime
+    import openpyxl
+    plan = ExportPlan(blob=winter_bytes, cell_writes=(), new_rows=(
+        NewRow({STATUS: "Confirmed", PROJECT: "990001",
+                START_DATE: "2026-12-10", END_DATE: "2026-12-13",
+                DEPARTURE: "CPH", ARRIVAL: "OSL", PAX: "49"}),))
+    wb = openpyxl.load_workbook(io.BytesIO(xlsx_writer.export(plan)), data_only=True)
+    ws = wb[wb.sheetnames[0]]
+    col = lambda letter: ord(letter) - ord("A") + 1
+    start, below = ws.cell(2, col(START_DATE)), ws.cell(3, col(START_DATE))
+    assert start.value == datetime(2026, 12, 10)          # was the int 46366
+    assert ws.cell(2, col(END_DATE)).value == datetime(2026, 12, 13)
+    # Styled as the untouched blank row beneath it is, not as the header.
+    assert start.number_format == below.number_format != "General"
+    assert start.font.b == below.font.b
+
+
 def test_unmodified_export_returns_original_bytes(workbook_bytes):
     plan = ExportPlan(blob=workbook_bytes, cell_writes=(), new_rows=())
     assert xlsx_writer.export(plan) is workbook_bytes

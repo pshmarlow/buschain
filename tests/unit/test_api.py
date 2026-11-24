@@ -422,6 +422,39 @@ def test_csv_export_works_whatever_the_trip_tab_is_called(tmp_path, winter_bytes
         assert csv_out.text.startswith("Status,Project")
 
 
+def test_first_trip_added_to_an_empty_workbook_survives_export_and_reimport(
+        tmp_path, winter_bytes):
+    """The app's own export must be something the app's own import accepts.
+
+    On a new season's workbook — header only, no trips yet — it was not. The
+    writer styles an appended row like the last row holding values, which on
+    an empty sheet is the HEADER, so the dates went out as bare day serials
+    (46366) in a general-format cell. Excel showed the number, the csv export
+    printed the number, and re-importing the file listed the row as "Start
+    date '46366' is not a valid date" — a trip that was operable on screen
+    until the file went through the round trip the app exists for.
+    """
+    trip = {"values": {"A": "Confirmed", "B": "990001", "E": "2026-12-10",
+                       "F": "2026-12-13", "G": "CPH", "H": "OSL", "L": "49"}}
+    upload = lambda data: {"file": ("CAPITALS WINTER.xlsx", data,
+                                    "application/octet-stream")}
+    with TestClient(create_app(tmp_path / "first.db")) as c:
+        assert c.post("/api/import", files=upload(winter_bytes)).status_code == 200
+        assert c.post("/api/trips", json=trip).status_code == 200
+        assert len(c.get("/api/state").json()["trips"]) == 1     # fine on screen
+        exported = c.get("/api/export.xlsx").content
+        # The csv export renders the same patched sheet, so it shows the date
+        # the same way Excel would.
+        assert ",2026-12-10,2026-12-13," in c.get("/api/export.csv").text
+
+    with TestClient(create_app(tmp_path / "again.db")) as c:
+        assert c.post("/api/import", files=upload(exported)).status_code == 200
+        state = c.get("/api/state").json()
+        assert state["non_operable"] == []
+        (back,) = state["trips"]
+        assert (back["start"], back["end"]) == ("2026-12-10", "2026-12-13")
+
+
 def test_edit_free_text_cell_roundtrips_to_export(client, workbook_bytes):
     """A passthrough column is editable and its edit reaches the xlsx, without
     disturbing any other cell."""

@@ -23,6 +23,9 @@ from .types import (
     ALL_COLUMNS, CellWrite, END_DATE, ExportPlan, INFO_SHEET, InfoCellWrite,
     InfoWrite, NewRow, PAX, PROJECT, START_DATE,
 )
+# The reader owns where the header is; the writer must agree with it about
+# which rows are data, so it takes the number rather than restating it.
+from .xlsx_reader import HEADER_ROW
 
 _CONTRACT_COLS = frozenset(ALL_COLUMNS)
 
@@ -398,7 +401,7 @@ def _scan_populated(xml: bytes, bound: int,
     needs.
 
     Returns the last row carrying a value, and a style index per column copied
-    from the last populated row that had one.
+    from the last populated DATA row that had one.
 
     Only cells that actually carry a value count, and both answers depend on
     that. The sheet trails ~1300 rows of empty-but-styled cells below the data:
@@ -406,6 +409,18 @@ def _scan_populated(xml: bytes, bound: int,
     appended date as a plain number (Excel showing 46266 instead of
     2026-09-01), and taking the literal last row would put a manually entered
     trip ~1300 rows below everything else.
+
+    The two answers treat the header row differently, on purpose. It counts
+    for `last_row` — on a sheet with no trips yet it is the only populated
+    row, and the first trip belongs directly under it. It never counts for
+    `styles`: a header is not a data row, and its cells are general-format in
+    every column. A new season's workbook is exactly that sheet (header, then
+    2,987 formatted but empty rows), and copying the header there sent the
+    first trips out with dates as bare serials — 46366 in Excel, 46366 in the
+    csv export, and refused by this app's own import as "not a valid date".
+    A column this leaves without an entry simply keeps the style of the cell
+    the value lands in (see `_patch_row`), which in those workbooks is the
+    blank row's own d-mmm-yy.
 
     One pass rather than two because the trip sheet is 14 MB and both walks
     want the same cell tags — and the caller's bound is passed to finditer
@@ -417,13 +432,14 @@ def _scan_populated(xml: bytes, bound: int,
         if m.group(3).endswith(b"/"):             # self-closing = empty
             continue
         col = m.group(1).decode()
+        row = int(m.group(2))
         # Contract columns only: the reader's own rule is that a row with
         # nothing but date-grid residue (P+) is not a trip, and row_labels
         # promises the same numbering — counting residue here made the
         # export contradict both.
         if col in _CONTRACT_COLS:
-            last_row = max(last_row, int(m.group(2)))
-        if col in columns:
+            last_row = max(last_row, row)
+        if col in columns and row > HEADER_ROW:
             s = _STYLE_ATTR.search(m.group(3))
             if s:
                 styles[col] = s.group(1)          # later rows overwrite: last wins
@@ -461,7 +477,9 @@ def _append_rows(xml: bytes, new_rows: tuple[NewRow, ...]) -> bytes:
         # The target row usually already exists as an empty styled one; when it
         # does not (a sheet with no trailing rows) _ensure_row creates it in
         # place. Either way the new cells take the style of the data rows
-        # above, never the general format of the blank row they land in.
+        # above, never the general format of the blank row they land in —
+        # unless there is no data row above at all, when the blank row's own
+        # style is the only statement the sheet makes (see _scan_populated).
         xml = _ensure_row(xml, row_num)
         xml = _patch_row(xml, row_num, writes, force_styles=styles)
 

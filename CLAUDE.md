@@ -32,7 +32,8 @@ default DB. For any experiment or manual run, pass a scratch path to
 edit it. `excels/CAPITALS WINTER.xlsx` is a fixture too: the new-season
 workbook, whose trip tab has a different name and which holds no trips at all
 — the tests use it to pin that the csv export follows the trips to the first
-tab. The same goes for it.
+tab, and that the first trip added to an empty sheet exports as a real date.
+The same goes for it.
 
 ## What this is
 
