@@ -1545,11 +1545,19 @@ class Repo:
         # units hang off, and a company created since the snapshot is simply
         # absent here and left alone (creating one is not undoable). .get for
         # the same reason as locks — entries written before renaming existed.
+        #
+        # The note is in the snapshot and deliberately NOT written back. A
+        # rename never changes it, and editing one (the Registry tab's note
+        # box) is not an undoable action — so restoring it made Undo revert a
+        # note typed since the snapshot, silently, as a side effect of
+        # stepping back some unrelated cell edit. Naming is what a rename
+        # moves, so naming is all this restores. The snapshot keeps its shape
+        # so entries already in the log still load.
         self.conn.executemany(
             "UPDATE registry_companies SET canonical_key = ?, display_name = ?,"
-            " note = ?, former_keys = ? WHERE id = ?",
-            [(key, name, note, former, cid)
-             for cid, key, name, note, former in snap.get("companies", ())],
+            " former_keys = ? WHERE id = ?",
+            [(key, name, former, cid)
+             for cid, key, name, _note, former in snap.get("companies", ())],
         )
 
     @contextmanager
@@ -1604,9 +1612,27 @@ class Repo:
                 (dataset_id,)).fetchone()
             if row is None:
                 raise RepoError("Nothing to undo")
-            with self.conn:
-                self._restore(dataset_id, json.loads(row["state"]))  # type: ignore[arg-type]
-                self.conn.execute("DELETE FROM undo_log WHERE id = ?", (row["id"],))
+            try:
+                with self.conn:
+                    self._restore(dataset_id, json.loads(row["state"]))  # type: ignore[arg-type]
+                    self.conn.execute("DELETE FROM undo_log WHERE id = ?", (row["id"],))
+            except sqlite3.IntegrityError as e:
+                # Creating a company is not undoable, so one can be added
+                # under a name a rename vacated — and stepping back that
+                # rename then collides with it on the UNIQUE key. This was a
+                # 500 that left the entry at the head of the stack, so every
+                # later Undo hit the same wall with nothing on screen to say
+                # why. The transaction above has rolled back whole; say what
+                # is in the way. ONLY that collision is translated: any other
+                # integrity failure in _restore is a bug, and dressing it as a
+                # naming conflict would send someone to fix the wrong thing.
+                if "registry_companies.canonical_key" not in str(e):
+                    raise
+                raise RepoError(
+                    f"Cannot undo '{row['label']}': it would give a company back "
+                    "a name that another company has taken since. Rename or "
+                    "delete that company in the Registry tab, then undo again."
+                ) from e
             return row["label"]
 
     # -- export --------------------------------------------------------------

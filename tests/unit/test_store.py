@@ -761,3 +761,59 @@ def test_undo_puts_back_the_registry_and_the_cells_together(repo):
     assert report.trips[0].display["Company name"] == "Ollex 1"
     assert "ollex" in registry.companies and "ollez" not in registry.companies
     assert not report.non_operable
+
+
+def test_undo_leaves_a_note_edited_since_the_snapshot_alone(repo):
+    """Editing a note is not an undoable action, so no Undo may take it back.
+    Every snapshot carries the company rows for the sake of renames, and
+    restoring the note from one made stepping back an unrelated cell edit
+    quietly revert a note typed after it."""
+    seeded(repo)
+    import_rows(repo, RawTripRow(2, trip_values()))
+    trip = repo.load_state()[0].trips[0].id
+    with repo.undoable("edit"):
+        repo.set_cell(trip, "C Notes", "x")
+    repo.upsert_company("Ollex", "call Tatjana first")
+    repo.undo()
+    assert repo.registry().companies["ollex"].note == "call Tatjana first"
+    assert repo.trip_overrides() == {}      # the cell edit itself did step back
+
+
+def test_undoing_a_rename_restores_the_name_but_not_the_note(repo):
+    """The two halves of a company row part ways on undo. The naming is what
+    the rename moved, and has to come back with the cells; the note was edited
+    afterwards, by an action Undo does not cover, and stays."""
+    seeded(repo)
+    import_rows(repo, RawTripRow(2, trip_values(company="Ollex 1")))
+    with repo.undoable("rename"):
+        repo.rename_company("ollex", "Ollez")
+    repo.upsert_company("Ollez", "renamed in August")
+    repo.undo()
+    company = repo.registry().companies["ollex"]
+    assert (company.name, company.note) == ("Ollex", "renamed in August")
+    assert not repo.load_state()[0].non_operable
+
+
+def test_undo_blocked_by_a_reused_company_name_says_so_and_recovers(repo):
+    """Creating a company is not undoable, so one can be added under the name
+    a rename vacated. Stepping the rename back then collides on the unique key
+    — once a 500 that left the entry stuck at the head of the stack, failing
+    every later Undo the same way. It must refuse with the reason, change
+    nothing, and go through once the name is free again."""
+    seeded(repo)
+    import_rows(repo, RawTripRow(2, trip_values(company="Ollex 1")))
+    with repo.undoable("rename ollex to Ollez"):
+        repo.rename_company("ollex", "Ollez")
+    repo.upsert_company("Ollex", None)          # takes the vacated name
+
+    with pytest.raises(RepoError, match="rename ollex to Ollez"):
+        repo.undo()
+    # Refused whole: still renamed, and the entry is still there to retry.
+    assert repo.load_state()[0].trips[0].display["Company name"] == "Ollez 1"
+    assert repo.undo_head() == {"label": "rename ollex to Ollez", "depth": 1}
+
+    repo.delete_company("ollex")
+    assert repo.undo() == "rename ollex to Ollez"
+    report, registry, _ = repo.load_state()
+    assert report.trips[0].display["Company name"] == "Ollex 1"
+    assert "ollex" in registry.companies and "ollez" not in registry.companies
