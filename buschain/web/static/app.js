@@ -2114,8 +2114,20 @@ const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun",
 
 let DAY_W = 22;                     // px per day — the zoom control
 let SHOW_CANCELED = false;
-let ALL_UNCOVERED = false;
 let SHOW_ADHOC = true;
+
+/* "All uncovered" starts ticked and remembers its state per browser. The
+   actionable-only view used to be the default, and the first assignment on a
+   new-season sheet dropped the board from 287 bars to 4: the buses with no
+   trip yet need their first one assigned by hand, and their candidates were
+   exactly what got hidden. Stored in localStorage, not server settings: it is
+   a view preference of whoever is at this browser, not plan data. Guarded
+   like loadSet — storage that throws must fall back, not break the board. */
+const ALL_UNCOVERED_KEY = "buschain.all-uncovered";
+let ALL_UNCOVERED = (() => {
+  try { return localStorage.getItem(ALL_UNCOVERED_KEY) !== "false"; }
+  catch (err) { return true; }
+})();
 
 /* Horizontal scroll is state the user owns: re-rendering on a selection or an
    accept must not yank the view back. Kept as a day index rather than pixels
@@ -2172,9 +2184,9 @@ function boardRows() {
 
   /* Most uncovered trips have no feasible unit at all, and drawing all of
      them packs ~35 lanes of bars nobody can act on across the top of the
-     board, burying the chains underneath. The default is the actionable
-     subset; what that leaves out is counted on the row, never dropped
-     silently, and one checkbox brings it back. */
+     board, burying the chains underneath. Unticking "All uncovered" narrows
+     the row to the actionable subset (opt-in now; see ALL_UNCOVERED). What
+     that leaves out is counted on the row, never dropped silently. */
   const uncovered = uncoveredTrips();
   const planned = plannedLinks();
   /* "Show plan on buses" is for seeing the plan as a running schedule, so its
@@ -4298,8 +4310,11 @@ $("#show-canceled").addEventListener("change", (e) => {
   renderBoard();
 });
 
+// The markup's default must not contradict the remembered choice.
+$("#all-uncovered").checked = ALL_UNCOVERED;
 $("#all-uncovered").addEventListener("change", (e) => {
   ALL_UNCOVERED = e.target.checked;
+  try { localStorage.setItem(ALL_UNCOVERED_KEY, String(ALL_UNCOVERED)); } catch {}
   renderBoard();
 });
 
