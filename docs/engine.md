@@ -621,3 +621,42 @@ All *listed, never auto-fixed*.
 | 9 — human-in-the-loop ranking | `suggest.py` (engine never assigns; `plan` is provisional; only `repo.accept` writes) |
 | 10 — non-49 Pax is ad hoc only | `graph.py` (`CHARTERED_PAX`, `numbered_unit_ok`), applied `feasible_edges` + `insertion_verdict`, `reach.py`, `solve.py`; imported violations listed by `checks.unit_integrity` as `pax_mismatch` |
 | 11 — ad hoc hires are cancellable at 21 days | `adhoc.py` (`ADHOC_CANCEL_NOTICE_DAYS`, `refusal`/`releasable`, `build`), committed by `repo.reclaim_adhoc` behind `_require_adhoc`; `rechain.py` deliberately leaves ad hoc alone |
+
+## 12. Extension point: bus priority and price (not built)
+
+Buses and companies are meant to get a priority, and later prices and other
+stats. A season's first trips stay manual: the engine cannot see which buses
+have actually been agreed with a company. Checked against the code on
+2026-11-26. The seams are in the right place; four gaps need deciding when the
+upgrade is built.
+
+**What already fits.** `graph.py` decides only what is *legal*. Priority is a
+preference, not a rule, so the rulebook does not change. Preference lives in
+four small places: the greedy plan's sort keys (`plan._key_coverage`,
+`plan._key_idle`), the suggestion order (`suggest._sort_key`), and the
+solver's tiered objective (`solve.py`: a covered trip ≫ an empty run ≫ a gap
+day), whose docstring already sets money aside until the registry carries
+rates. `model.Company` is the natural home, and `store/db.py` has the
+add-column migration pattern.
+
+**The gaps.**
+1. *The planners never see the registry.* `plan.build_plan`,
+   `solve.build_plan` and `suggest.build_suggestions` take only trips and unit
+   assignments. A priority or price map has to be passed through `evaluate`,
+   `optimize`, `rechain.py` and `adhoc.py`.
+2. *Priority competes with coverage, and that is a business choice.* Put it
+   ahead of gap and empty run in the sort keys and plans cover fewer trips
+   (the 117/190 measurement in §5 would move). Put it last and it only breaks
+   ties. In the solver, give it a tier between "trip" and "empty run" to mean
+   "never lose a trip for priority".
+3. *Prices belong in the solver, not the greedy.* The greedy planner ranks one
+   link at a time; a price is a cost over a whole chain (days × rate).
+   `optimize` keeps the solver's plan only when it covers more trips, and the
+   ad hoc reclaim compares coverage only. Both would have to compare cost too.
+   The reclaim matters most, because hiring an ad hoc bus vs running a
+   chartered one is the price question.
+4. *A bus is just a number.* `Company.units` is `frozenset[int]`, and
+   `(company, unit)` is the key everywhere (timelines, links, locks, the
+   board's row keys). Priority and price per company are easy. Stats per bus
+   (size, VIP, its own rate, home city) would mean turning units into records.
+   That is the one structural change, so decide it first.
