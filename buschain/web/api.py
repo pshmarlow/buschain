@@ -1044,7 +1044,7 @@ class RenameBody(BaseModel):
     name: str
 
 
-@router.post("/registry/companies/{key}/rename")
+@router.post("/registry/companies/{key:path}/rename")
 def rename_company(request: Request, key: str, body: RenameBody) -> dict[str, Any]:
     """Rename a company and carry the new name through the working set.
 
@@ -1064,20 +1064,20 @@ def rename_company(request: Request, key: str, body: RenameBody) -> dict[str, An
     return {"ok": True, "cells": cells}
 
 
-@router.delete("/registry/companies/{key}")
-def delete_company(request: Request, key: str) -> dict[str, Any]:
-    try:
-        _repo(request).delete_company(key)
-    except RepoError as e:
-        raise HTTPException(409, str(e)) from e
-    return {"ok": True}
+# The company routes take {key:path}, not {key}: a company key is its name
+# casefolded, and names like 'Nordic Alliance/Ollex' are real. A plain {key}
+# cannot match a '/' — not even an encoded %2F, which the server decodes before
+# routing — so every action on such a company answered 405 Method Not Allowed.
+# The price is that :path is greedy, which is why delete_company is declared
+# AFTER remove_unit: first match wins, and declared first it would swallow
+# DELETE …/ollex/units/1 as a company named 'ollex/units/1'.
 
 
 class UnitBody(BaseModel):
     unit: int
 
 
-@router.post("/registry/companies/{key}/units")
+@router.post("/registry/companies/{key:path}/units")
 def add_unit(request: Request, key: str, body: UnitBody) -> dict[str, Any]:
     try:
         _repo(request).add_unit(key, body.unit)
@@ -1086,13 +1086,23 @@ def add_unit(request: Request, key: str, body: UnitBody) -> dict[str, Any]:
     return {"ok": True}
 
 
-@router.delete("/registry/companies/{key}/units/{unit}")
+@router.delete("/registry/companies/{key:path}/units/{unit}")
 def remove_unit(request: Request, key: str, unit: int) -> dict[str, Any]:
     try:
         _repo(request).remove_unit(key, unit)
     except RepoError as e:
         # In-use refusals are state conflicts, like delete_company's and
         # remove_city's identical guards.
+        raise HTTPException(409, str(e)) from e
+    return {"ok": True}
+
+
+# After remove_unit, on purpose — see the note above UnitBody.
+@router.delete("/registry/companies/{key:path}")
+def delete_company(request: Request, key: str) -> dict[str, Any]:
+    try:
+        _repo(request).delete_company(key)
+    except RepoError as e:
         raise HTTPException(409, str(e)) from e
     return {"ok": True}
 

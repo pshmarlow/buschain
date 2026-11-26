@@ -1319,6 +1319,33 @@ def test_rename_onto_an_existing_company_is_a_conflict(client):
     assert "already a registered company" in res.json()["detail"]
 
 
+def test_a_company_whose_name_has_a_slash_can_be_maintained(client):
+    """'Nordic Alliance/Ollex' is a real company on the winter workbook's
+    Information sheet. Its key carries the '/', which a plain {key} route
+    cannot match even when encoded, so adding a unit to it answered 405.
+    Driven through the encoded URL, because that is what the browser sends.
+
+    Also pins the route order the fix depends on: the company DELETE route is
+    greedy, so removing a unit must leave the company standing."""
+    from urllib.parse import quote
+    assert client.post("/api/registry/companies",
+                       json={"name": "Nordic Alliance/Ollex"}).status_code == 200
+    key = next(c["key"] for c in client.get("/api/state").json()["registry"]["companies"]
+               if c["name"] == "Nordic Alliance/Ollex")
+    url = f"/api/registry/companies/{quote(key, safe='')}"
+
+    def units():
+        companies = client.get("/api/state").json()["registry"]["companies"]
+        return next((c["units"] for c in companies if c["key"] == key), None)
+
+    assert client.post(f"{url}/units", json={"unit": 1}).status_code == 200
+    assert units() == [1]
+    assert client.delete(f"{url}/units/1").status_code == 200
+    assert units() == []                    # the unit went, the company did not
+    assert client.delete(url).status_code == 200
+    assert units() is None
+
+
 def test_rename_reaches_the_information_sheet_and_the_export(client):
     """The renamed company keeps its row in Bus Companies — which is matched by
     NAME to decide where a fleet count is written back, so leaving it stale

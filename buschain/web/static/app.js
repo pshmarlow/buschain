@@ -1578,6 +1578,17 @@ function renderPlanSummary() {
     const inScope = uncovered - beyondHorizon() - startedCount();
     box.append(el("span", {}, !uncovered
       ? "Nothing uncovered — no plan needed."
+      /* A chain only ever extends from a trip that already has a bus
+         (plan.py's supply is the assigned trips), so a sheet with no bus on
+         any trip — every new-season workbook on import day — can never get a
+         plan, whatever the window or the fleet. Checked before the scope
+         readings below: blaming reach or the window would send the dispatcher
+         widening settings that cannot help, when the move is one assignment
+         by hand per bus. */
+      : !S.trips.some((t) => t.assignment)
+        ? "No bus has a recorded trip yet, so there is nothing to chain from. "
+          + "Assign each bus's first trip by hand (Data tab or the board) and "
+          + "the planner extends from there."
       : !inScope
         /* The first wording is word for word what this said before started
            trips were left out, and still what it says when none have. */
@@ -2196,6 +2207,14 @@ function boardRows() {
      escape. An empty row buries the chains no less thoroughly than a tall one
      and tells you nothing, so fall back to showing them. */
   const noneActionable = !actionable.length && loose.length > 0;
+  /* The same reasoning one step further: with no unit and no ad hoc row on
+     the board there are no chains to bury, so the filter protects nothing and
+     only hides the work. That is the board on a new-season import, where no
+     trip has a bus yet — and noneActionable alone does not catch it, because
+     a single Y trip's rule-3 ad hoc fallback counts as actionable. Measured:
+     "1 of 288 actionable", one bar, and a two-day axis under Plan ahead: All. */
+  const nothingToBury = !Object.keys(S.engine.timelines).length
+    && !Object.keys(S.engine.adhoc_by_company).length;
   /* A locked trip is dropped from the demand set, so it can never be
      actionable, so the actionable default would hide every one of them — and
      the only control that unlocks a trip is on the panel you reach by clicking
@@ -2204,7 +2223,9 @@ function boardRows() {
   const lockNote = lockedLoose.length ? ` · ${lockedLoose.length} locked` : "";
   rows.push({
     kind: "uncovered", key: "uncovered", label: "Uncovered",
-    note: (ALL_UNCOVERED
+    /* Every trip drawn means the breakdown, not "N of M actionable" — that
+       wording names a filter, and it is not being applied. */
+    note: (ALL_UNCOVERED || (nothingToBury && !noneActionable)
       ? `${actionable.length} now · ${later.length} later · ${never} no chain`
         + scopeNote
       : noneActionable
@@ -2213,7 +2234,7 @@ function boardRows() {
       : `${actionable.length} of ${loose.length} actionable`)
       + lockNote
       + (plannedCount ? ` · ${plannedCount} planned below` : ""),
-    trips: ALL_UNCOVERED || noneActionable
+    trips: ALL_UNCOVERED || noneActionable || nothingToBury
       ? loose : [...actionable, ...lockedLoose],
   });
 
@@ -2242,6 +2263,25 @@ function boardRows() {
           : []),
       ],
     });
+  }
+
+  /* A registered bus with no trips yet still gets a row. The engine's
+     timelines are built from assigned trips, so without this a bus added on
+     the Registry tab is invisible here — and the board is where a trip gets
+     dragged onto a bus, so its first trip had nowhere to land. On a new
+     season's workbook, which names no bus on any trip, that is every bus.
+     drop_targets already answers for idle buses; only the row was missing. */
+  const haveRows = new Set(Object.keys(S.engine.timelines));
+  for (const c of S.registry.companies) {
+    for (const u of c.units) {
+      const key = `${c.key}|${u}`;
+      if (haveRows.has(key)) continue;
+      // A canceled-only unit is drawn by the fold-in below, with its trips.
+      if (SHOW_CANCELED && canceled.some((t) => t.assignment.company === c.key
+        && t.assignment.unit === u)) continue;
+      rows.push({ kind: "unit", key, label: unitLabel(c.key, String(u)),
+                  note: "no trips yet", trips: [] });
+    }
   }
 
   /* A unit whose ONLY trips are canceled has no timeline row — the engine's
@@ -2793,7 +2833,9 @@ function boardRow(r, ctx) {
   const { lane, overlap, lanes } = packLanes(r.trips, r.kind === "unit");
   const canvas = el("div", { class: "row-canvas" });
   canvas.style.width = ctx.width + "px";
-  canvas.style.height = lanes * LANE_H + 4 + "px";
+  // At least one lane: an empty bus row is a drop target and must be tall
+  // enough to aim at.
+  canvas.style.height = Math.max(lanes, 1) * LANE_H + 4 + "px";
 
   // First, so everything else paints over it: the band is context, and it must
   // never sit on top of a bar or hide the today line.
@@ -3690,7 +3732,10 @@ function renderRegistry() {
   /* Sync warnings sit beside the seed ones and are re-shown after every
      import, not written once: an unread seed warning is exactly how two real
      vehicles went unregistered and took 31 rows out of the operable set. */
-  for (const w of [...S.seed_warnings, ...(S.sync_warnings || [])]) {
+  // Deduped: before the first seed, an import stores the reader's warnings as
+  // sync warnings, and seeding then stores the same ones again as seed
+  // warnings — the "Fleets column is empty" line printed twice.
+  for (const w of new Set([...S.seed_warnings, ...(S.sync_warnings || [])])) {
     warn.append(el("div", { class: "reason" }, "⚠ " + w));
   }
   for (const name of S.unwritable_companies || []) {
@@ -3708,13 +3753,13 @@ function renderRegistry() {
     const unitChips = el("span", {},
       ...c.units.map((u) => el("span", { class: "chip" }, String(u),
         el("button", { onclick: async () => {
-          try { await api(`/registry/companies/${c.key}/units/${u}`, { method: "DELETE" }); await refresh(); }
+          try { await api(`/registry/companies/${encodeURIComponent(c.key)}/units/${u}`, { method: "DELETE" }); await refresh(); }
           catch (err) { toast(err.message, true); }
         }}, "×"))),
       el("button", { class: "btn small", onclick: async () => {
         const u = prompt(`Add unit number for ${c.name}:`);
         if (!u) return;
-        try { await post(`/registry/companies/${c.key}/units`, { unit: Number(u) }); await refresh(); }
+        try { await post(`/registry/companies/${encodeURIComponent(c.key)}/units`, { unit: Number(u) }); await refresh(); }
         catch (err) { toast(err.message, true); }
       }}, "+ unit"));
     table.append(el("tr", {},
@@ -3727,7 +3772,7 @@ function renderRegistry() {
       el("td", {}, noteInput(c)),
       el("td", {}, el("button", { class: "btn small", onclick: async () => {
         if (!confirm(`Delete company ${c.name}? Trips referencing it become non-operable.`)) return;
-        try { await api(`/registry/companies/${c.key}`, { method: "DELETE" }); await refresh(); }
+        try { await api(`/registry/companies/${encodeURIComponent(c.key)}`, { method: "DELETE" }); await refresh(); }
         catch (err) { toast(err.message, true); }
       }}, "Delete")),
     ));
@@ -3773,9 +3818,15 @@ function renderSetupBanner() {
   const needsSeed = S.dataset && !S.seeded;
   banner.classList.toggle("hidden", !needsSeed);
   if (!needsSeed) return;
+  /* Not "all rows, because no city resolves": the import syncs the city list
+     whether or not the registry is seeded (api.import_file), so on an
+     unseeded registry most rows are operable and the ones that are not
+     usually fail for reasons seeding will not fix. Only companies wait on it. */
+  const bad = S.non_operable.length;
+  const total = S.trips.length + bad;
   banner.replaceChildren(
-    el("span", {}, `Registry is empty — all ${S.non_operable.length} imported rows are ` +
-      "non-operable until it is seeded, because no city or company resolves."),
+    el("span", {}, "Registry is not seeded, so no company or bus unit resolves yet — "
+      + `${bad} of ${total} imported rows are currently non-operable.`),
     el("button", { class: "btn primary", onclick: seedRegistry },
       "Seed from Information sheet"),
   );
