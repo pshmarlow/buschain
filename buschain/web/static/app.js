@@ -2262,6 +2262,7 @@ function boardRows() {
       note: idle && idle.note ? `${committed.length} · ${idle.note}` : "",
       title: idle ? `${unitLabel(company, unit)} — ${idle.title}` : "",
       state: idle ? idle.state : "",
+      short: idle && idle.short,
       trips: [
         ...committed,
         ...canceled.filter((t) => t.assignment.company === company
@@ -2548,6 +2549,8 @@ function unitIdleReason(unitKey, unitTrips, uncovered) {
        and hide the fact that a setting is what put it out of range. */
     if (aimable.length) {
       return { state: "stranded", note: `idle since ${shortDate(tail.end)}`,
+        short: `in ${tail.arr} since ${shortDate(tail.end)}; nothing departs `
+          + `${tail.arr} and empty runs are off`,
         title: `Parked in ${tail.arr} since ${tail.end}. `
           + `${plural(aimable.length, "uncovered trip")} `
           + `${aimable.length === 1 ? "starts" : "start"} after that, but none `
@@ -2638,8 +2641,19 @@ function unitIdleReason(unitKey, unitTrips, uncovered) {
       + "constraint or clashes with what the unit is already booked for.");
   }
 
+  /* The one-clause version the capacity note lists by name. Only the single
+     nearest miss, whichever side it falls on: every entry in `measured` misses
+     by now (any fit returned `booked` above), so this is the one that came
+     closest, and the full both-sides account stays in `title`. */
+  const near = closest(measured);
+  const short = `in ${tail.arr} since ${shortDate(tail.end)}; nearest trip, `
+    + `${near.d.dep}→${near.d.arr} on ${shortDate(near.d.start)}, is `
+    + (near.early
+      ? `${plural(near.early, "day")} too soon to drive there`
+      : `${plural(near.late, "day")} past the ${maxRest()}-day rest limit`);
+
   return { state: "stranded", note: `idle since ${shortDate(tail.end)}`,
-    title: parts.join(" ") };
+    short, title: parts.join(" ") };
 }
 
 /* What the current selection means, resolved against fresh state. */
@@ -3008,17 +3022,33 @@ function renderCapacityNote(rows) {
      are true and a planner needs them together: stranded units are the part
      that is recoverable by scheduling rather than by capacity. Read off the
      board rows, whose labels carry the same diagnosis — unitIdleReason used to
-     run a second time here, doubling the board's dominant cost. */
-  const stranded = rows.filter(
-    (r) => r.kind === "unit" && r.state === "stranded").length;
-  if (stranded) {
-    box.append(el("span", { class: "stranded-note" },
-      ` Separately, ${plural(stranded, "unit")} of the fleet ${stranded === 1 ? "is" : "are"} `
-      + "stranded: parked somewhere that no uncovered trip departs from within the "
-      + `chaining window, so no accept in any order can put ${stranded === 1
-        ? "it" : "them"} back to work. That capacity is idle rather than missing. `
-      + "Hover a marked unit row for which trips each one can no longer reach."));
-  }
+     run a second time here, doubling the board's dominant cost.
+
+     Named, not counted. A bare "1 unit is stranded" sent people hunting the
+     board for which row, and its old wording ("parked somewhere no uncovered
+     trip departs from") was the pre-empty-run rule that unitIdleReason's own
+     comment calls the wrong explanation. Each name hovers to the row label's
+     full diagnosis and clicks through to the tail's panel, which opens just
+     below this banner. */
+  const stranded = rows.filter((r) => r.kind === "unit" && r.state === "stranded");
+  if (!stranded.length) return;
+  const one = stranded.length === 1;
+  const note = el("span", { class: "stranded-note" }, " Separately, "
+    + (one ? "" : `${stranded.length} units of the fleet are stranded, so no accept `
+      + "in any order can put them back to work. That capacity is idle rather "
+      + "than missing: "));
+  stranded.slice(0, 12).forEach((r, i) => {
+    if (i) note.append(", ");
+    note.append(el("button", { class: "linklike", title: r.title,
+      onclick: () => selectOnBoard(unitTailId(r.key)) }, r.label), ` (${r.short})`);
+  });
+  if (stranded.length > 12) note.append(`, and ${stranded.length - 12} more`);
+  note.append(one
+    ? " is stranded. No accept in any order can put it back to work, so that "
+      + "capacity is idle rather than missing. Click the name to see what it could "
+      + "take next."
+    : ". Click a name to see what it could take next.");
+  box.append(note);
 }
 
 /* The buses the plan did not pick. Two cases that read alike and mean very
