@@ -126,3 +126,11 @@ Strict one-way layering; each boundary is a design decision, not a habit:
   remote. The work moves between two machines, so an unpushed commit is an
   invisible one. Never force-push to satisfy this: if a push is rejected as
   non-fast-forward, say so instead of escalating.
+- **A push to `main` is a production deploy.** `.github/workflows/deploy.yml`
+  runs ruff and the full suite, snapshots the Fly volume, and redeploys the
+  hosted copy, restarting it for 10–30 s. Combined with the rule above, every
+  commit made on `main` ships. Do work on a branch, and treat a schema
+  migration in `store/db.py` as a change to live data: it runs on the real plan
+  the moment the new machine boots. The hosted entry point is
+  `web/cloud.py` (Basic auth around the unchanged `create_app`); README
+  "Running in the cloud" has the setup and the restore procedure.

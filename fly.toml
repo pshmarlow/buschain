@@ -1,0 +1,43 @@
+# Fly.io config for the hosted copy. .github/workflows/deploy.yml deploys it on
+# every push to main; README "Running in the cloud" has the one-time setup.
+
+# App names are global on Fly, so this is whatever `fly apps create` accepted.
+# It is also the URL: https://<app>.fly.dev
+app = "buschain-bp0z2g"
+# Stockholm: the region nearest the dispatcher. `fly platform regions` lists
+# the others. The volume must be created in this same region.
+primary_region = "arn"
+
+[env]
+  # On the volume below. cloud.build_app refuses to start without it.
+  BUSCHAIN_DB = "/data/buschain.db"
+  # The dispatcher's zone, taken from the PC the app ran on. "Today" (the start
+  # of the planning window) comes from the server clock, which is UTC on Fly.
+  TZ = "Europe/Helsinki"
+  # BUSCHAIN_PASSWORD is a secret (`fly secrets set`), never written here:
+  # this file is in a public repository.
+
+[[mounts]]
+  source = "buschain_data"
+  destination = "/data"
+
+[http_service]
+  internal_port = 8080
+  # Basic auth sends the password with every request, so plain http must never
+  # reach the app.
+  force_https = true
+  # Stop when idle, wake on the next request: a cold start of a few seconds,
+  # in exchange for staying far below the free plan's $5/month. The plan is on
+  # the volume, so stopping loses nothing.
+  auto_stop_machines = "stop"
+  auto_start_machines = true
+  min_machines_running = 0
+
+# Exactly one machine, always. Each machine gets its own volume, so a second
+# one (`fly scale count 2`, or `fly launch` adding a standby) would be a second,
+# separate database: two diverging plans behind one URL.
+[[vm]]
+  size = "shared-cpu-1x"
+  # 512 MB, not 256: openpyxl loading a ~2 MB workbook plus a CBC solve risk
+  # being killed for running out of memory at 256.
+  memory = "512mb"

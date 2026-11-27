@@ -1,0 +1,53 @@
+name: Test and deploy
+
+# Every push to main is a production deploy, gated on the full suite. Pushes to
+# any other branch deploy nothing. There is deliberately no pull_request_target
+# trigger: this repository is public, and that trigger runs with the repo's
+# secrets, so it would hand FLY_API_TOKEN to code from anyone's fork.
+on:
+  push:
+    branches: [main]
+
+# Two quick pushes queue rather than race: they must not deploy out of order or
+# snapshot mid-deploy. cancel-in-progress is off so a deploy that has started
+# always finishes.
+concurrency:
+  group: deploy
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10
+      # From the lockfile, the same one the Dockerfile installs from: what passes
+      # here is what gets deployed. 3.13 to match the image.
+      - run: uv sync --locked --extra dev --python 3.13
+      - run: uvx ruff check buschain tests
+      # The runner has node, so test_rules_js runs here rather than skipping.
+      - run: .venv/bin/python -m pytest -q
+
+  deploy:
+    needs: test
+    runs-on: ubuntu-latest
+    env:
+      FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: superfly/flyctl-actions/setup-flyctl@1.5
+      # A restore point taken immediately before each deploy. The new code's
+      # db.connect() runs its schema migrations on the live plan at startup,
+      # and Fly's own daily snapshot can be up to a day old by then. A failure
+      # here stops the deploy: shipping a migration with no way back is exactly
+      # what this step exists to prevent.
+      - name: Snapshot the database volume
+        run: |
+          volume=$(flyctl volumes list --json | jq -r '.[0].id')
+          flyctl volumes snapshots create "$volume"
+      # Built on this runner, not on Fly's remote builder, so the build does not
+      # depend on Fly's builder pricing, which Fly says may change.
+      - run: flyctl deploy --local-only

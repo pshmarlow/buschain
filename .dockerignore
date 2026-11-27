@@ -1,0 +1,10 @@
+# An allowlist, not a blocklist: ignore everything, then let in only what the
+# image needs. buschain.db is live user data, and an image is pushed to a
+# registry. A blocklist would let through any copy nobody thought to list
+# (buschain-old.db, a backup in a subfolder); with an allowlist the database
+# can never be baked into an image.
+*
+!pyproject.toml
+!uv.lock
+!buschain/
+buschain/**/__pycache__

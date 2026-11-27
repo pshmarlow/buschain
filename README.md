@@ -113,6 +113,97 @@ provide, and a heavily synced folder (OneDrive, Dropbox) sees the `.db`, `-wal`
 and `-shm` as three files to upload at three different moments, so restoring
 from version history can reconstitute a torn database.
 
+## Running in the cloud
+
+The hosted copy runs on Fly.io's free plan, behind a password, and **redeploys
+itself on every push to `main`**, but only after ruff and the full suite pass.
+Pushes to any other branch deploy nothing.
+
+- `.github/workflows/deploy.yml` runs the tests, snapshots the database volume,
+  then deploys. `Dockerfile` builds from `uv.lock`, so the versions CI tested
+  are the versions that ship. `fly.toml` mounts a 1 GB volume at `/data`, and
+  `buschain.db` lives there.
+- `buschain/web/cloud.py` is the hosted entry point: the same app, wrapped in
+  HTTP Basic auth. The browser asks for a username and a password; any username
+  works, and the password is the `BUSCHAIN_PASSWORD` secret. It refuses to start
+  without `BUSCHAIN_PASSWORD` (16+ characters) and `BUSCHAIN_DB`. The local
+  launcher is unchanged and asks for nothing.
+- **Never bookmark it with the password in the URL**
+  (`https://user:password@….fly.dev`). The page loads, but Chrome then refuses
+  every one of the app's own requests ("Request cannot be constructed from a
+  URL that includes credentials"), and nothing works. Bookmark the plain URL;
+  the browser asks once per session and reuses the password from then on.
+- **Excel import and export work as they do locally.** The workbook is uploaded
+  from, and the export downloaded to, the dispatcher's own PC. The server keeps
+  nothing but the database, which already archives each imported workbook.
+- **One person at a time.** Undo is global, and a screen refreshes only after
+  its own action, so two people working at once would undo each other's work
+  and plan on stale screens.
+- Each deploy is a 10–30 second outage, because the one machine restarts. An
+  action caught mid-restart fails and just needs repeating.
+- Cost: about $3.90/month even if it never sleeps. It stops when idle (a few
+  seconds' cold start on the next visit), so usually far less. The free plan
+  covers $5/month, but **past $5 the whole month is billed**, so check the
+  billing page now and then.
+
+### One-time setup
+
+```bash
+fly auth signup                 # the free plan needs a card on file
+fly apps create <name>          # then set app = "<name>" in fly.toml
+# Same region as fly.toml. 14 days of snapshots rather than the default 5: at this
+# database's size they stay well inside the free 10 GB.
+fly volumes create buschain_data --size 1 --region arn --snapshot-retention 14
+# In your own terminal, not through Claude, so the password never lands in a transcript:
+.venv\Scripts\python.exe -c "import secrets; print(secrets.token_urlsafe(24))"
+fly secrets set BUSCHAIN_PASSWORD=<that password> --stage
+# Piped, so the token is never shown. One year, not the 20-year default: this
+# token can deploy code that reads the live plan.
+fly tokens create deploy --expiry 8760h | gh secret set FLY_API_TOKEN
+```
+
+The hosted app is `buschain-bp0z2g` (https://buschain-bp0z2g.fly.dev). The
+random suffix is deliberate: a guessable name gets probed by bots, and every
+probe wakes the stopped machine and spends free-plan usage.
+
+Then push to `main` (or run `fly deploy` once). Exactly one machine, always:
+each machine gets its own volume, so `fly scale count 2` would mean two
+separate, diverging plans behind one URL.
+
+### Moving a local plan into the cloud
+
+Do this once, onto a freshly deployed app, before anyone plans in it:
+
+1. Stop the local app. Then fold its WAL back into the main file, so
+   `buschain.db` is complete on its own:
+   `.venv\Scripts\python.exe -c "import sqlite3; sqlite3.connect('buschain.db').execute('PRAGMA wal_checkpoint(TRUNCATE)')"`
+2. `fly ssh sftp shell`, then `put buschain.db /data/upload.db`.
+3. Copy it into the live database with SQLite's backup API:
+   `fly ssh console -C "python -c \"import sqlite3; sqlite3.connect('/data/upload.db').backup(sqlite3.connect('/data/buschain.db'))\""`.
+   Use the backup API, not `mv`: the app holds the database open, and moving
+   a file over it can replay the old `-wal` onto the new file.
+4. `fly machine restart`, so nothing cached from the empty database survives,
+   then `fly ssh console -C "rm /data/upload.db"`.
+5. Rename the local `buschain.db` (e.g. to `buschain.db.pre-cloud`) on every
+   PC. From now on the hosted copy is the plan, and a local one is a stale
+   fork.
+
+### Day to day
+
+- **Deploy:** push to `main`. Follow the run with `gh run watch`.
+- **Change the password:** `fly secrets set BUSCHAIN_PASSWORD=<new>`. The app
+  restarts with it, and browsers ask again.
+- **The deploy token expires on 2027-11-27.** After that, every deploy fails at
+  the snapshot step with an authorization error. Renew it with the same piped
+  `fly tokens create deploy …` command from the setup above.
+- **Restore from a snapshot** (Fly keeps a daily snapshot, plus one from just
+  before each deploy):
+  `fly volumes list` → `fly volumes snapshots list <volume id>` →
+  `fly volumes create buschain_data --snapshot-id <snapshot id> --region arn` →
+  `fly machine destroy <machine id> --force` → `fly volumes destroy <old volume id>` →
+  `fly deploy`, which attaches the restored volume to a new machine. This has
+  not been rehearsed yet; do it once on a quiet day before you need it.
+
 ## Tests
 
 ```bash
