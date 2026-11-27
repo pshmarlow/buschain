@@ -2,8 +2,8 @@ from datetime import date, timedelta
 
 from buschain import contract
 from buschain.codecs.types import (
-    ARRIVAL, BUS_PREFERENCE, COMPANY_NAME, DEPARTURE, END_DATE, ER, PAX,
-    PROJECT, RawTripRow, START_DATE, STATUS,
+    ARRIVAL, BUS_PREFERENCE, COLUMN_LETTERS, COMPANY_NAME, DEPARTURE, END_DATE,
+    ER, PAX, PROJECT, RawTripRow, START_DATE, STATUS,
 )
 from buschain.model import NonOperableRow, Registry, Status, Trip, TripId, Company
 
@@ -46,6 +46,28 @@ def test_valid_demand_row():
     assert isinstance(t, Trip)
     assert t.status is Status.CONFIRMED
     assert t.assignment is None and t.project == 12345
+
+
+def test_whole_number_stored_as_float_displays_without_decimal():
+    """A non-Excel writer stores 25735 as '<v>25735.0</v>' and openpyxl reads
+    that as a float; the Data tab showed '25735.0' for what Excel shows as 25735."""
+    t = check(row(project=25735.0, pax=49.0))
+    assert isinstance(t, Trip)
+    assert t.project == 25735 and t.pax == 49
+    assert t.display["Project"] == "25735" and t.display["Pax"] == "49"
+
+
+def test_fractional_float_keeps_its_decimals_in_free_text():
+    quoted = COLUMN_LETTERS["Quoted rate"]
+    t = check(RawTripRow(sheet_row=2, values={**row().values, quoted: 12.5}))
+    assert isinstance(t, Trip)
+    assert t.display["Quoted rate"] == "12.5"
+
+
+def test_fractional_project_is_not_a_whole_number():
+    r = check(row(project=25735.5))
+    assert isinstance(r, NonOperableRow)
+    assert "Project '25735.5' is not a whole number" in r.reasons
 
 
 def test_city_normalization_applies():

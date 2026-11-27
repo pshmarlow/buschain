@@ -96,7 +96,7 @@ def test_superscript_project_is_a_reason_not_a_crash():
         ALL_COLUMNS[6]: "STO", ALL_COLUMNS[7]: "CPH",
     })
     result = contract.validate_row(row, TripId("sheet", 2), registry)
-    assert any("not numeric" in r for r in result.reasons)
+    assert any("not a whole number" in r for r in result.reasons)
 
 
 def test_superscript_unit_number_does_not_resolve():

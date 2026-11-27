@@ -2739,9 +2739,13 @@ function tripBar(t, row, laneIdx, isOverlap, ctx) {
     else if (ctx.partners.has(t.id)) cls.push("partner");
     else cls.push("dim");
   }
+  // C Notes on a line of their own: they are free text, often a sentence, and
+  // run on after the state note they would read as part of it.
+  const cNotes = t.values["C Notes"];
   const bar = el("div", { class: cls.join(" "), title:
     `#${t.id.split(":")[1]} ${t.dep}→${t.arr} · ${t.start} → ${t.end}`
-    + ` · ${t.status}${t.pax ? ` · ${t.pax} pax` : ""}${t.er ? " · ER" : ""}${note}` },
+    + ` · ${t.status}${t.pax ? ` · ${t.pax} pax` : ""}${t.er ? " · ER" : ""}${note}`
+    + (cNotes ? `\nC Notes: ${cNotes}` : "") },
     `${t.dep}→${t.arr}`);
   bar.dataset.trip = t.id;
   placeSpan(bar, t, ctx, laneIdx * LANE_H + 2 + "px");

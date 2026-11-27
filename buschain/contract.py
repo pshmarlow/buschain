@@ -43,7 +43,10 @@ _NOT_ER = {"n/a", "na", "no", "n", "-"}
 MAX_TRIP_SPAN_DAYS = 60
 
 
-def _as_str(value: object) -> str:
+def cell_text(value: object) -> str:
+    """A cell as the user sees it: what the Data tab shows, what failure
+    reasons quote, and what the store compares an edit against to decide it
+    changed nothing (Repo._set_cell) — one rendering, so those three agree."""
     if value is None:
         return ""
     # xlsx date cells arrive as datetime; render the date so display and any
@@ -52,6 +55,12 @@ def _as_str(value: object) -> str:
         return value.date().isoformat()
     if isinstance(value, date):
         return value.isoformat()
+    # Some writers other than Excel store whole numbers as '<v>25735.0</v>',
+    # and openpyxl reads anything with a '.' as a float. Excel shows 25735, so
+    # this does too — the CAPITALS winter test workbook has 385 Project and 411
+    # Pax cells like that. A fractional value keeps its decimals.
+    if isinstance(value, float) and value.is_integer():
+        return str(int(value))
     return normalize.trim(str(value))
 
 
@@ -64,7 +73,7 @@ def _parse_date(value: object) -> date | None:
         return value.date()
     if isinstance(value, date):
         return value
-    text = _as_str(value)
+    text = cell_text(value)
     try:
         return date.fromisoformat(text)
     except ValueError:
@@ -78,12 +87,13 @@ def _parse_int(value: object) -> int | None:
         return value
     if isinstance(value, float) and value.is_integer():
         return int(value)
-    text = _as_str(value)
+    text = cell_text(value)
     # Text parses exactly like the typed branches above: the overlay path
-    # re-validates everything as text, so "-5" and "3.0" (the very rendering
-    # _as_str gives a float cell) must not change meaning on an edit that
-    # changed nothing. try/except rather than a digit-class check — isdigit
-    # accepted superscripts int() refuses, which was a crash on load.
+    # re-validates everything as text, so "-5" and "3.0" (how a non-Excel
+    # writer stores a whole number, and so what a csv or a paste can carry)
+    # mean the same as the typed cells. try/except rather than a digit-class
+    # check — isdigit accepted superscripts int() refuses, which was a crash
+    # on load.
     try:
         return int(text)
     except ValueError:
@@ -99,7 +109,7 @@ def validate_row(row: RawTripRow, trip_id: TripId, registry: Registry) -> Trip |
     # Text renderings converted once up front: the checks below quote them in
     # reasons and reuse them as inputs, and this runs per row on every
     # working-set load. v keeps the raw typed values for the date/int parsers.
-    s = {c: _as_str(v[c]) for c in ALL_COLUMNS}
+    s = {c: cell_text(v[c]) for c in ALL_COLUMNS}
     reasons: list[str] = []
 
     status = Status.parse(s[STATUS])
@@ -109,7 +119,9 @@ def validate_row(row: RawTripRow, trip_id: TripId, registry: Registry) -> Trip |
     project_raw = s[PROJECT]
     project = _parse_int(v[PROJECT]) if project_raw else None
     if project_raw and project is None:
-        reasons.append(f"Project {project_raw!r} is not numeric")
+        # One wording for '25735.5', 'November' and '²' alike: "not numeric"
+        # was simply false for the first, which is a number, just not a whole one.
+        reasons.append(f"Project {project_raw!r} is not a whole number")
 
     # Bus Preference carries the company constraint as free text: a bare name
     # ('Vilneda') is a preference — use this company — and a 'NO ' prefix

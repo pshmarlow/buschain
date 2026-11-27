@@ -1291,9 +1291,12 @@ class Repo:
         set_cell/set_cells."""
         letter = COLUMN_LETTERS[title]
         original = json.loads(row["raw"]).get(letter)
-        if value == ("" if original is None else str(original)):
+        if value == contract.cell_text(original):
             # Edited back to the imported value: drop the override so the
             # export does not splice a cell that did not actually change.
+            # Compared as the Data tab SHOWS it, not as str(): an imported
+            # 25735.0 displays as '25735', so typing that back must count as
+            # unchanged, and the same goes for whitespace the display trims.
             self.conn.execute(
                 "DELETE FROM cell_overrides WHERE trip_id = ? AND column_title = ?",
                 (row["id"], title),

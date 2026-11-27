@@ -274,6 +274,19 @@ def test_delete_drops_links_that_named_the_row(repo):
     assert demand.assignment is not None
 
 
+def test_typing_back_a_displayed_whole_number_clears_the_edit(repo):
+    """The sheet stores 25735.0 and the Data tab shows '25735'. Retyping what
+    you see must count as unchanged, or the export splices a cell nobody
+    changed — the no-op check used to compare against str(), i.e. '25735.0'."""
+    seeded(repo)
+    import_rows(repo, RawTripRow(2, trip_values(project=25735.0)))
+    repo.set_cell(TripId("sheet", 2), "Project", "25736")
+    assert repo.build_export_plan().cell_writes != ()
+
+    repo.set_cell(TripId("sheet", 2), "Project", "25735")
+    assert repo.build_export_plan().cell_writes == ()
+
+
 # -- undo --------------------------------------------------------------------
 
 def test_undo_reverses_a_cell_edit(repo):
