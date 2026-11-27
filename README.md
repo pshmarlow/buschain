@@ -90,8 +90,10 @@ to the greedy one — on the reference data 124 covered vs 113, at the cost of
 more empty runs, which the preview states before you apply.
 
 On the **Timelines** board, selecting a bar opens its panel; **Show in Data**
-(shortcut: `d`) jumps to that trip's row in the Data tab, clearing the Data
-filters first if they were hiding it. Bars can be dragged — sideways to move a
+(shortcut: `d`, or double-click the bar) jumps to that trip's row in the Data
+tab, clearing the Data filters first if they were hiding it, and keeps the row
+highlighted for 30 seconds (one row at a time — sending another trip moves the
+highlight). Bars can be dragged — sideways to move a
 trip's dates, up or down to move it to another bus or take one off. **Show
 plan on buses** draws each planned trip, still hatched, on the bus that would
 run it instead of in the Uncovered row; it changes the picture, not the plan

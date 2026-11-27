@@ -761,6 +761,15 @@ const todayISO = (() => {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 })();
 
+/* The row Show in Data last landed on, and when: { id, at } or null. Held as
+   state rather than as a class on the row because every mutation refetches
+   /state and rebuilds the whole table, and a class set only on the DOM would
+   vanish with the first edit made inside the 30 seconds it exists for. The
+   duration lives in the CSS animation alone (tr.data-mark): nothing here
+   expires the mark, an old one simply resumes past its end and draws as
+   nothing. */
+let DATA_MARK = null;
+
 /* Row decoration for the operable table. Leans on ISO dates comparing
    correctly as plain strings, so no Date objects are built per row. */
 function decorateTripRow(tr, r, today) {
@@ -778,6 +787,19 @@ function decorateTripRow(tr, r, today) {
   // default order is the sheet's own, see Repo._trip_rows). The cost is that a
   // trip running across today fades too.
   if (r.start < today) tr.classList.add("past");
+  if (DATA_MARK && r.id === DATA_MARK.id) resumeDataMark(tr);
+}
+
+/* Puts the mark on a row at the point its animation should have reached by
+   now: a negative delay means "already this far in", and past the end
+   `forwards` holds the faded state. Needed wherever the browser would
+   otherwise start the 30 s over — a rebuilt row (decorateTripRow), and the
+   Data tab coming back from display:none, which cancels a CSS animation and
+   restarts it from zero when shown (showTab; measured: back to 0 % after a
+   5 s look at the board). */
+function resumeDataMark(tr) {
+  tr.classList.add("data-mark");
+  tr.style.animationDelay = `${DATA_MARK.at - Date.now()}ms`;
 }
 
 /* Search / sort / filter state, one set per table so the two never interfere.
@@ -1235,10 +1257,19 @@ function jumpToToday() {
     return;
   }
   scrollRowIntoView(table, target);
+  // The row looks like any other once it is in view, so flash it. Removing and
+  // forcing a reflow before re-adding restarts the animation on a repeat click,
+  // which the browser would otherwise coalesce into no change at all. Only a
+  // flash: "today" is a position, not a row anyone has to find again — the
+  // long mark is Show in Data's (jumpToDataRow).
+  target.classList.remove("jump-target");
+  void target.offsetWidth;
+  target.classList.add("jump-target");
 }
 
 /* Shared by both jumps so they cannot drift on the header offset — the two
-   otherwise land at different heights on the same table. */
+   otherwise land at different heights on the same table. Scroll only: each
+   jump marks the row its own way. */
 function scrollRowIntoView(table, target) {
   // Offset by the frozen header, or it covers the row we just navigated to.
   const wrap = table.closest(".table-wrap");
@@ -1246,12 +1277,6 @@ function scrollRowIntoView(table, target) {
   const delta = target.getBoundingClientRect().top
     - wrap.getBoundingClientRect().top - headH;
   wrap.scrollTo({ top: wrap.scrollTop + delta, behavior: "smooth" });
-  // The row looks like any other once it is in view, so flash it. Removing and
-  // forcing a reflow before re-adding restarts the animation on a repeat click,
-  // which the browser would otherwise coalesce into no change at all.
-  target.classList.remove("jump-target");
-  void target.offsetWidth;
-  target.classList.add("jump-target");
 }
 
 /* Timelines -> Data. The board says which bus runs what and when; the row says
@@ -1285,6 +1310,17 @@ function jumpToDataRow(tripId) {
     }
     toast("Cleared the Data filters — the row was hidden by them.");
   }
+  /* Held ~30 s rather than flashed: the row is where the edit happens, and
+     the user often looks back at the board before making it. One mark at a
+     time — Show in Data on another trip moves it rather than adding a second
+     yellow row to tell apart. The reflow restarts the animation when the
+     same trip is sent again, and the inline delay a rebuild may have left on
+     the row is cleared so it starts from zero. */
+  for (const tr of table.querySelectorAll("tr.data-mark")) tr.classList.remove("data-mark");
+  DATA_MARK = { id: tripId, at: Date.now() };
+  target.style.animationDelay = "";
+  void target.offsetWidth;
+  target.classList.add("data-mark");
   scrollRowIntoView(table, target);
 }
 
@@ -4004,6 +4040,9 @@ function showTab(name) {
     // Same hidden-measurement debt as the board: see alignFilterRow.
     alignFilterRow($("#trips-table"));
     alignFilterRow($("#nonop-table"));
+    // And the mark's animation, which display:none threw away (resumeDataMark).
+    const marked = DATA_MARK && $("#trips-table tr.data-mark");
+    if (marked) resumeDataMark(marked);
   }
   applyBoardScroll();          // the board could not position itself while hidden
 }
@@ -4043,10 +4082,45 @@ $("#board").addEventListener("click", (e) => {
      shipped once behind the very gate it existed to escape. */
   const anchor = e.target.closest(".row-label[data-trip], .next-stub");
   const bar = anchor || e.target.closest(".bar");
+  // Bars only: the row label and the next-stub carry data-trip as well, but
+  // they stand for the bus (its tail trip), not a trip anyone pointed at.
+  CLICKED_BAR = !anchor && bar ? bar.dataset.trip : null;
   NEXT_ALL = false;                         // a fresh selection, a fresh list
   SEL = bar ? bar.dataset.trip : null;      // empty canvas clears
   renderBoard();
 });
+
+/* Double-click a bar = Show in Data. Not a `dblclick` listener, because the
+   second click does not land on the bar: the first one selects it, and the
+   detail panel that opens ABOVE the board pushes the whole board down (~120 px
+   from nothing selected). The second click then hits whatever slid under the
+   pointer — measured: the month axis, so no dblclick fired at all, and the
+   click itself cleared the selection. Worse, it can be a ghost slot (one click
+   = accept) or the panel's own Lock / assign buttons.
+
+   So the trip is the one the FIRST click hit (CLICKED_BAR, armed by the board
+   handler), and the browser's own click count says when the next click is its
+   second half — it honours the OS double-click speed and distance, which a
+   hand-rolled timer would not. Capture phase on the document, so that second
+   click is consumed before anything under the pointer can act on it.
+
+   Every click disarms first and only a bar click re-arms (the board handler
+   runs after this one), so a double-click anywhere else — a word in a Data
+   cell — can never be taken for this. A click that ends a drag is left to the
+   board handler, which swallows it: that gesture was a move. */
+let CLICKED_BAR = null;
+document.addEventListener("click", (e) => {
+  const id = CLICKED_BAR;
+  CLICKED_BAR = null;
+  if (e.detail !== 2 || !id || DRAG_WAS_A_DRAG) return;
+  e.stopPropagation();
+  e.preventDefault();
+  // The second press also selected a word under the pointer. Cleared rather
+  // than prevented with user-select:none on bars — reading and copying bar
+  // text is kept on purpose (see #board.dragging-x in style.css).
+  window.getSelection()?.removeAllRanges();
+  jumpToDataRow(id);
+}, true);
 
 /* ---------- dragging a bar ---------- */
 

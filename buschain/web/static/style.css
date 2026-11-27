@@ -234,6 +234,17 @@ tbody tr.past { opacity: 0.65; }
   to { background: transparent; }
 }
 tbody tr.jump-target { animation: jump-flash 1.4s ease-out; }
+/* Show in Data's mark: the same yellow, held instead of flashed, because the
+   user often glances back at the board before editing the row. 30 s is the
+   ONE place the duration lives — app.js resumes the animation on a rebuilt
+   row via a negative delay and never times it out itself. Holds 28 s, then a
+   2 s fade so it does not blink off mid-read. `forwards` keeps it faded, which
+   is what makes an expired mark on a rebuilt row draw as nothing. */
+@keyframes data-mark {
+  0%, 93% { background: var(--jump-flash); }
+  100% { background: transparent; }
+}
+tbody tr.data-mark { animation: data-mark 30s linear forwards; }
 .badge { display: inline-block; padding: 0.05rem 0.45rem; border-radius: 10px; font-size: 0.75rem; }
 .badge.confirmed { background: var(--ok-bg); color: var(--ok-fg); }
 .badge.pending { background: var(--risk-bg); color: var(--risk-fg); }
