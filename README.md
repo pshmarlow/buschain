@@ -117,7 +117,8 @@ from version history can reconstitute a torn database.
 
 The hosted copy runs on Fly.io's free plan, behind a password, and **redeploys
 itself on every push to `main`**, but only after ruff and the full suite pass.
-Pushes to any other branch deploy nothing.
+Pushes to any other branch deploy nothing, and neither does a push that changes
+only `.md` files: none of them is in the image.
 
 - `.github/workflows/deploy.yml` runs the tests, snapshots the database volume,
   then deploys. `Dockerfile` builds from `uv.lock`, so the versions CI tested
@@ -133,6 +134,11 @@ Pushes to any other branch deploy nothing.
   every one of the app's own requests ("Request cannot be constructed from a
   URL that includes credentials"), and nothing works. Bookmark the plain URL;
   the browser asks once per session and reuses the password from then on.
+- **The cloud copy has its own database**, independent of each PC's local
+  `buschain.db`. Nothing is synced between them in either direction. Deploys
+  replace the code, never the data. The one way a deploy touches the data is
+  a schema migration in `store/db.py`, which runs on it at boot, after the
+  workflow's pre-deploy snapshot.
 - **Excel import and export work as they do locally.** The workbook is uploaded
   from, and the export downloaded to, the dispatcher's own PC. The server keeps
   nothing but the database, which already archives each imported workbook.
@@ -175,24 +181,6 @@ Exactly one machine, always: each machine gets its own volume, so
 `fly scale count 2` would mean two separate, diverging plans behind one URL.
 That is also why every `fly deploy` here carries `--ha=false`: flyctl
 otherwise adds a spare machine whenever it has to create one.
-
-### Moving a local plan into the cloud
-
-Do this once, onto a freshly deployed app, before anyone plans in it:
-
-1. Stop the local app. Then fold its WAL back into the main file, so
-   `buschain.db` is complete on its own:
-   `.venv\Scripts\python.exe -c "import sqlite3; sqlite3.connect('buschain.db').execute('PRAGMA wal_checkpoint(TRUNCATE)')"`
-2. `fly ssh sftp shell`, then `put buschain.db /data/upload.db`.
-3. Copy it into the live database with SQLite's backup API:
-   `fly ssh console -C "python -c \"import sqlite3; sqlite3.connect('/data/upload.db').backup(sqlite3.connect('/data/buschain.db'))\""`.
-   Use the backup API, not `mv`: the app holds the database open, and moving
-   a file over it can replay the old `-wal` onto the new file.
-4. `fly machine restart`, so nothing cached from the empty database survives,
-   then `fly ssh console -C "rm /data/upload.db"`.
-5. Rename the local `buschain.db` (e.g. to `buschain.db.pre-cloud`) on every
-   PC. From now on the hosted copy is the plan, and a local one is a stale
-   fork.
 
 ### Day to day
 
