@@ -7,6 +7,13 @@ name: Test and deploy
 on:
   push:
     branches: [main]
+    # A push that changes nothing but Markdown (README, CLAUDE.md, docs/) runs
+    # nothing. No .md file is in the image (.dockerignore is an allowlist) and
+    # no test reads one, so it would only restart production on an identical
+    # image. A push that mixes docs with anything else still runs in full. If
+    # a test ever starts reading a .md file, this filter has to go.
+    paths-ignore:
+      - '**.md'
 
 # Two quick pushes queue rather than race: they must not deploy out of order or
 # snapshot mid-deploy. cancel-in-progress is off so a deploy that has started
