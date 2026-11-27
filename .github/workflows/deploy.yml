@@ -23,7 +23,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: astral-sh/setup-uv@v10
+      # The full version: setup-uv publishes no floating major tag, and a bare
+      # `@v10` fails before any step runs ("unable to find version").
+      - uses: astral-sh/setup-uv@v10.4.0
       # From the lockfile, the same one the Dockerfile installs from: what passes
       # here is what gets deployed. 3.13 to match the image.
       - run: uv sync --locked --extra dev --python 3.13
