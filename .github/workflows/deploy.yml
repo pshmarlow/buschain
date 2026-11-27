@@ -52,4 +52,7 @@ jobs:
           flyctl volumes snapshots create "$volume"
       # Built on this runner, not on Fly's remote builder, so the build does not
       # depend on Fly's builder pricing, which Fly says may change.
-      - run: flyctl deploy --local-only
+      # --ha=false: flyctl defaults to adding a spare machine whenever it creates
+      # machines (a new app, or after a restore), and here a spare means a
+      # second volume, i.e. a second and diverging database (see fly.toml).
+      - run: flyctl deploy --local-only --ha=false

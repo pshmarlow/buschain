@@ -166,9 +166,15 @@ The hosted app is `buschain-bp0z2g` (https://buschain-bp0z2g.fly.dev). The
 random suffix is deliberate: a guessable name gets probed by bots, and every
 probe wakes the stopped machine and spends free-plan usage.
 
-Then push to `main` (or run `fly deploy` once). Exactly one machine, always:
-each machine gets its own volume, so `fly scale count 2` would mean two
-separate, diverging plans behind one URL.
+**The very first deploy runs from your machine**, as
+`fly deploy --local-only --ha=false`, not from the workflow. Fly can't snapshot a
+volume that no machine has formatted yet, so the workflow's snapshot step fails
+on a brand-new volume. After that one deploy, pushes to `main` take over.
+
+Exactly one machine, always: each machine gets its own volume, so
+`fly scale count 2` would mean two separate, diverging plans behind one URL.
+That is also why every `fly deploy` here carries `--ha=false`: flyctl
+otherwise adds a spare machine whenever it has to create one.
 
 ### Moving a local plan into the cloud
 
@@ -201,7 +207,7 @@ Do this once, onto a freshly deployed app, before anyone plans in it:
   `fly volumes list` → `fly volumes snapshots list <volume id>` →
   `fly volumes create buschain_data --snapshot-id <snapshot id> --region arn` →
   `fly machine destroy <machine id> --force` → `fly volumes destroy <old volume id>` →
-  `fly deploy`, which attaches the restored volume to a new machine. This has
+  `fly deploy --ha=false`, which attaches the restored volume to a new machine. This has
   not been rehearsed yet; do it once on a quiet day before you need it.
 
 ## Tests
